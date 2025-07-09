@@ -34,6 +34,7 @@ from scripts.coregister import coregister_automatic
 from scripts.shape_shifter import shape_shift_mpp
 from scripts.antspy_registration_onraster import main_vnir_swir as antspy_registration_vnir_swir
 from scripts.nonground_mask_creator import crop_image_to_extent
+from geoharmony.tools.image_matchmaker.image_matchmaker import coregister_gui
 import argparse
 import sys
 from scripts.utils import *
@@ -122,6 +123,12 @@ def splash(vnir_hdr,
     print(" ")
     print(Color.BLUE + "------> Performing coregistration..." + Color.END)
     if manual_warping:
+
+        #### TODO DONE UNTIL HERE NEED TO MAKE SURE IT WORKS NOW
+        vnir_hdr_warped = coregister_gui(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr, coreg_vnir_band_indices, out_folder, use_available_homography=use_available_homography, name = "vnir")
+        swir_hdr_warped = coregister_gui(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr, coreg_swir_band_indices, out_folder, use_available_homography=use_available_homography, name = "swir")
+
+
         vnir_hdr_warped = coregister_manual(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr_u16, coreg_vnir_band_indices, use_available_homography=use_available_homography, name = "vnir")
         swir_hdr_warped = coregister_manual(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr_u16, coreg_swir_band_indices, use_available_homography=use_available_homography, name = "swir")
     else: # automatic coregistration using brute force technique
