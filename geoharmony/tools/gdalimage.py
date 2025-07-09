@@ -151,110 +151,14 @@ class GdalImage():
             })
         self.band_wavelengths_units = self.ds.GetMetadata()['wavelength_units'] if 'wavelength_units' in self.ds.GetMetadata() else None
 
+        return self
 
-class gdalwriter():
-    def __init__(self, array, metadata):
-        self.array = array
-        self.metadata = metadata
-
-    def to_envi(self, path):
-        """
-        Write an array to an ENVI file using GDAL.
-
-        Parameters
-        ----------
-        array : numpy.ndarray
-            The data array to write.
-        path : str
-            The output file path (should end with .hdr).
-        metadata : gdalmetadata
-            Metadata object containing geotransform, projection, etc.
-
-        Returns
-        -------
-        None
-        """
-
-        # Check if array shape matches metadata
-        if self.array.shape[1] != self.metadata.rows or self.array.shape[2] != self.metadata.cols or self.array.shape[0] != self.metadata.bands:
-            raise ValueError("Array shape does not match metadata: "
-                             f"array shape {self.array.shape}, "
-                             f"expected (bands={self.metadata.bands}, rows={self.metadata.rows}, cols={self.metadata.cols})")
-
-        self.path = path
-        driver = gdal.GetDriverByName('ENVI')
-        out_ds = driver.Create(self.path, self.metadata.cols, self.metadata.rows, self.metadata.bands, self.metadata.dtype_classes['gdal'])
-
-        if out_ds is None:
-            raise RuntimeError(f"Could not create dataset: {self.path}")
-
-        out_ds.SetGeoTransform(self.metadata.geotransform)
-        out_ds.SetProjection(self.metadata.projection)
-
-        for band in range(1, self.metadata.bands + 1):
-            out_ds.GetRasterBand(band).WriteArray(self.array[band - 1])
-            out_ds.GetRasterBand(band).SetDescription(self.metadata.band_description[band - 1])
-            if self.metadata.band_nodata[band - 1] is not None:
-                out_ds.GetRasterBand(band).SetNoDataValue(self.metadata.band_nodata[band - 1])
-
-        out_ds.FlushCache()
-        out_ds = None
-        print(f"ENVI file saved to: {self.path}")
-
-    def remove_bands_from_metadata(self, bands_to_remove):
-        """
-        Remove specified band(s) and their information from a gdalmetadata object.
-
-        Parameters
-        ----------
-        metadata : gdalmetadata
-            The metadata object to update.
-        bands_to_remove : list of int
-            List of band indices (1-based) to remove.
-
-        Returns
-        -------
-        None
-        """
-        # Convert to 0-based indices and sort descending to avoid index shift
-        bands_to_remove = sorted([b - 1 for b in bands_to_remove], reverse=True)
-        for b in bands_to_remove:
-            if 0 <= b < self.metadata.bands:
-                del self.metadata.band_description[b]
-                del self.metadata.band_nodata[b]
-        self.metadata.bands -= len(bands_to_remove)
-
-
-    def _add_waterfall_band_to_image(self, row_band_array):
-        """
-        Add a waterfall row band to the existing array and save it as an ENVI file.
-
-        Parameters
-        ----------
-        row_band_array : numpy.ndarray
-            The array containing the waterfall row band data.
-
-        Returns
-        -------
-        None
-        """
-        if self.array.shape[1:] != row_band_array.shape[1:]:
-            raise ValueError("Row band array must have the shape of the original array.")
-
-        new_array = np.concatenate((self.array, row_band_array[None, ...]), axis=0)
-
-        # Update metadata for new band
-        self.metadata.bands += 1
-        self.metadata.band_description.append("Waterfall Row Band (Created By SPLASH)")
-        self.metadata.band_nodata.append(None)
-        self.metadata.band_wavelengths.append(None)
-
-        # Write the new array to an ENVI file
-        self.to_envi(new_array)
-
-    def save_image_envi_add_wr(self, row_band_array, output_path):
-        self._add_waterfall_band_to_image(row_band_array)
-        self.to_envi(output_path)
+    def create_latlon_raster(self):
+        # creating lat and lon rasters and then cropping them accordingly
+        lon_values = np.linspace(self.xmin, self.xmax, self.cols)
+        lat_values = np.linspace(self.ymin, self.ymax, self.rows)
+        lon_raster, lat_raster = np.meshgrid(lon_values, lat_values)
+        return lon_raster, lat_raster
 
 
 def warp_extent_res(gdalimage_input: GdalImage,
