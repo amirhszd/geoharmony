@@ -1,0 +1,25 @@
+.click-button {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+.click-button:hover {
+  background-color: #e0e0e0 !important;
+}
+
+/* Base hover for enabled buttons */
+.submit-button:hover {
+  background-color: #e0e0e0 !important;   /* optional light feedback */
+  cursor: pointer;
+}
+
+/* Disabled state: show a “no-entry” cursor */
+.submit-button:disabled {
+  cursor: not-allowed;
+  /* keep original background so it never “hovers” */
+}
+
+/* Prevent any hover style when disabled */
+.submit-button:disabled:hover {
+  background-color: inherit;  /* don’t change color */
+  cursor: not-allowed;
+}
