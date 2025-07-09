@@ -7,6 +7,21 @@ import multiprocessing as mp
 import os
 import webbrowser
 import dash_bootstrap_components as dbc
+import time
+import requests
+import threading
+
+def wait_then_open(port=8050, path=""):
+    url = f"http://127.0.0.1:{port}/{path}"
+    for _ in range(50):  # retry for ~5 seconds
+        try:
+            r = requests.get(url)
+            if r.status_code == 200:
+                webbrowser.open(url)
+                return
+        except requests.exceptions.ConnectionError:
+            pass
+        time.sleep(0.1)
 
 # =========================
 #      MAIN DASH APP
@@ -94,7 +109,7 @@ def make_dash_app(image1, image2, results_queue):
             # ---------- Submit button ----------
             dbc.Row([
                 dbc.Col(
-                    dbc.Button("Submit", id="submit-button",
+                    dbc.Button("Next", id="submit-button",
                                color="success", disabled=True, className="px-5"),
                     className="text-center my-4"
                 )
@@ -118,6 +133,12 @@ def make_dash_app(image1, image2, results_queue):
                 )
             ]),
 
+            dbc.Row(id="spinner-ui", style={"display": "none"}, children=[
+                dbc.Col([
+                    html.H4("Processing...", className="text-center mt-4"),
+                    dbc.Spinner(size="lg", color="primary", fullscreen=True)
+                ])
+            ]),
 
             # Stores
             dcc.Store(id="store-left", data=[]),
@@ -212,6 +233,7 @@ def make_dash_app(image1, image2, results_queue):
     @app.callback(
         Output("success-div", "children"),
         Output("success-div", "is_open"),
+        Output("spinner-ui", "style"),  # ← NEW
         Input("submit-button", "n_clicks"),
         State("store-left", "data"),
         State("store-right", "data"),
@@ -221,11 +243,14 @@ def make_dash_app(image1, image2, results_queue):
         if not n:
             raise dash.exceptions.PreventUpdate
 
+        # Show spinner immediately
+        spinner_style = {"display": "block"}
+
         # 1) Put the results on the queue
         results_queue.put((left_pts, right_pts))
 
         # 2) Show “Success” message for the user
-        success_msg = "Points submitted – you may close this window."
+        success_msg = "Points submitted..."
 
         # 3) OPTIONAL: exit the Dash process after a brief delay
         #    (gives the user time to see the message)
@@ -236,7 +261,7 @@ def make_dash_app(image1, image2, results_queue):
 
         threading.Thread(target=delayed_exit, daemon=True).start()
 
-        return success_msg, True
+        return success_msg, True, spinner_style
 
     @app.callback(
         Output("submit-button", "disabled"),
@@ -259,7 +284,8 @@ def make_dash_app(image1, image2, results_queue):
 # =========================
 #      RUN DASH APP
 # =========================
-def run_dash(image1, image2, results_queue):
+def run_get_points_app(image1, image2, results_queue):
     app = make_dash_app(image1, image2, results_queue)
-    webbrowser.open("http://127.0.0.1:8050")
+    threading.Thread(target=lambda: wait_then_open(8050), daemon=True).start()
     app.run(debug=False)
+
