@@ -10,6 +10,7 @@ import dash_bootstrap_components as dbc
 import time
 import requests
 import threading
+import logging
 
 def wait_then_open(port=8050, path=""):
     url = f"http://127.0.0.1:{port}/{path}"
@@ -22,6 +23,21 @@ def wait_then_open(port=8050, path=""):
         except requests.exceptions.ConnectionError:
             pass
         time.sleep(0.1)
+
+
+class DashLoggerHandler(logging.StreamHandler):
+    def __init__(self):
+        logging.StreamHandler.__init__(self)
+        self.queue = []
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.queue.append(msg)
+
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+dashLoggerHandler = DashLoggerHandler()
+logger.addHandler(dashLoggerHandler)
 
 # =========================
 #      MAIN DASH APP
@@ -141,12 +157,25 @@ def make_dash_app(image1, image2, results_queue):
                 ])
             ]),
 
+            html.Div([
+                dcc.Interval(id='interval1', interval=5 * 1000, n_intervals=0),
+                html.H1(id='div-out', children='Log'),
+                html.Iframe(id='console-out', srcDoc='', style={'width': '50%', 'height': 400})
+            ]),
+
             # Stores
             dcc.Store(id="store-left", data=[]),
             dcc.Store(id="store-right", data=[])
         ])
 
     app.layout = serve_layout(fig1, fig2)
+
+    @app.callback(
+        Output('console-out', 'srcDoc'),
+        Input('interval1', 'n_intervals'))
+    def update_output(n):
+        return ('\n'.join(dashLoggerHandler.queue)).replace('\n', '<BR>')
+
 
     # =========================
     #      LEFT IMAGE CALLBACK

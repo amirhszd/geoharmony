@@ -73,8 +73,7 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
         # Alpha slider
         dbc.Row(dbc.Col(
             dcc.Slider(id='alpha-slider', min=0, max=1, step=0.1, value=0.5,
-                       tooltip={"placement": "bottom", "always_visible": True},
-                       style={"width": "50%"}),
+                       tooltip={"placement": "bottom", "always_visible": True}),
             className="my-3 px-5"
         )),
 
