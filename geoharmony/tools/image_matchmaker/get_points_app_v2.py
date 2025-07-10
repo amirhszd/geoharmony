@@ -36,6 +36,7 @@ def make_dash_app(image1, image2, results_queue):
     # =========================
     def make_base_fig(image):
         fig = px.imshow(image)
+        fig = go.FigureWidget(fig)
         fig.update_layout(
             clickmode='event+select',
             dragmode='zoom',
@@ -161,7 +162,7 @@ def make_dash_app(image1, image2, results_queue):
         prevent_initial_call=True
     )
     def update_left(clickData, undo, clear, relayout, points):
-        return update_image_core(clickData, undo, clear, relayout, points, image1)
+        return update_image_core(clickData, undo, clear, relayout, points, fig1)
 
     # =========================
     #      RIGHT IMAGE CALLBACK
@@ -177,12 +178,12 @@ def make_dash_app(image1, image2, results_queue):
         prevent_initial_call=True
     )
     def update_right(clickData, undo, clear, relayout, points):
-        return update_image_core(clickData, undo, clear, relayout, points, image2)
+        return update_image_core(clickData, undo, clear, relayout, points, fig2)
 
     # =========================
     #      IMAGE CORE LOGIC
     # =========================
-    def update_image_core(clickData, undo_clicks, clear_clicks, relayoutData, stored_points, image):
+    def update_image_core(clickData, undo_clicks, clear_clicks, relayoutData, stored_points, fig):
         ctx = dash.callback_context
         if not ctx.triggered:
             return dash.no_update, dash.no_update
@@ -198,10 +199,11 @@ def make_dash_app(image1, image2, results_queue):
         elif 'clear' in triggered_id:
             stored_points = []
 
-        fig_new = make_base_fig(image)
+
+        # fig_new = make_base_fig(image)
 
         if stored_points:
-            fig_new.add_trace(
+            fig.add_trace(
                 go.Scatter(
                     x=[p['x'] for p in stored_points],
                     y=[p['y'] for p in stored_points],
@@ -211,7 +213,8 @@ def make_dash_app(image1, image2, results_queue):
                     textposition='top center',
                     textfont=dict(size=14, color='black', family='Arial Black'),
                     name='Clicks',
-                    opacity=1
+                    opacity=1,
+                    showlegend = False,
                 )
             )
 
@@ -219,11 +222,11 @@ def make_dash_app(image1, image2, results_queue):
             x_range = relayoutData.get('xaxis.range[0]'), relayoutData.get('xaxis.range[1]')
             y_range = relayoutData.get('yaxis.range[0]'), relayoutData.get('yaxis.range[1]')
             if None not in x_range:
-                fig_new.update_xaxes(range=x_range)
+                fig.update_xaxes(range=x_range)
             if None not in y_range:
-                fig_new.update_yaxes(range=y_range)
+                fig.update_yaxes(range=y_range)
 
-        return fig_new, stored_points
+        return fig, stored_points
 
 
 

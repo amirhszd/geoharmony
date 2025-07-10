@@ -15,10 +15,10 @@ def launch_get_points_app(img1, img2):
     p.start()
     return q, p
 
-def launch_show_warped_app(image):
+def launch_show_warped_app(image1, image2):
     mgr = mp.Manager()
     q = mgr.Queue()
-    p = mp.Process(target=run_show_warped_app, args=(image, q), daemon=True)
+    p = mp.Process(target=run_show_warped_app, args=(image1, image2, q), daemon=True)
     p.start()
     return q, p
 
@@ -86,7 +86,7 @@ def get_points_gui(ref_image, target_image):
 
     return ref_pts, tgt_pts
 
-def get_warped_gui(image):
+def get_warped_gui(image1, image2):
     """
     This function launches the Dash app for manual point picking.
     It uses multiprocessing to run the app in a separate process and returns the picked points.
@@ -103,7 +103,7 @@ def get_warped_gui(image):
     """
 
     # launch GUI
-    q, dash_process = launch_show_warped_app(image)
+    q, dash_process = launch_show_warped_app(image1, image2)
 
     # block until user clicks Submit
     response = q.get()
@@ -145,16 +145,16 @@ def coregister_gui(ref_gdalimage,
             h_mat = calc_homography(ref_points, target_points)
 
             # warp the target image using the homography matrix
-            tareget_arr_warped = cv2.warpPerspective(target_arr_uint8, h_mat, (ref_arr_uint8.shape[1], ref_arr_uint8.shape[0]))
+            target_arr_warped = cv2.warpPerspective(target_arr_uint8, h_mat, (ref_arr_uint8.shape[1], ref_arr_uint8.shape[0]))
 
             # blend the two images to show them with 50% transparency each
             mica_float = ref_arr_uint8.astype(np.float32)
-            hs_float = tareget_arr_warped.astype(np.float32)
+            hs_float = target_arr_warped.astype(np.float32)
             composite = 0.5 * mica_float + 0.5 * hs_float
             composite_uint8 = np.clip(composite, 0, 255).astype(np.uint8)
 
             # send the new image to the GUI to show the warped image, if the response is True we move on if not we repeat the process
-            response = get_warped_gui(composite_uint8)
+            response = get_warped_gui(ref_arr_uint8, target_arr_warped.astype(np.uint8))
 
     # if successful we save the homography matrix to file
     np.save(homography_path, h_mat)
