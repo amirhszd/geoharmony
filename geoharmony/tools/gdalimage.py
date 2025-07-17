@@ -33,7 +33,7 @@ class GdalImage():
         # initialize the parent class gdalmetadata
         self.gdalmetadata(path)
 
-    def read(self, bands: list = None):
+    def read(self, bands: list = None, band_last = False):
         """
         Reads bands from the dataset.
         - If bands is None, loads the entire array.
@@ -47,11 +47,12 @@ class GdalImage():
         elif isinstance(bands, (list, tuple)):
             band_array = []
             for band in bands:
-                band_array.append(self.ds.GetRasterBand(band).ReadAsArray()[None, ...])
+                band_array.append(self.ds.GetRasterBand(band + 1).ReadAsArray()[None, ...])
             array = np.concatenate(band_array, 0)
         else:
             raise ValueError("bands must be None, an int, or a list/tuple of ints")
-        return array
+
+        return array if not band_last else np.moveaxis(array, 0, -1)
 
     def read_display_image(self, bands: list):
         """
@@ -102,6 +103,7 @@ class GdalImage():
         self.cols = ds.RasterXSize
         self.rows = ds.RasterYSize
         self.bands = ds.RasterCount
+        self.shape = (self.bands, self.rows, self.cols)
 
         # get image CRS string
         srs = osr.SpatialReference()
@@ -159,63 +161,6 @@ class GdalImage():
         lat_values = np.linspace(self.ymin, self.ymax, self.rows)
         lon_raster, lat_raster = np.meshgrid(lon_values, lat_values)
         return lon_raster, lat_raster
-
-
-def warp_extent_res(gdalimage_input: GdalImage,
-                    gdalimage_target: GdalImage,
-                    extension_string: str,
-                    resampling_algorithm: str = "near") -> str:
-    """
-    Applies the extent and resolution of the target image to the input image.
-
-    Args:
-        gdalimage_input (GdalImage): The input image to be warped.
-        gdalimage_target (GdalImage): The target image whose extent and resolution will be used.
-        extension_string (str): Suffix or extension for the output file.
-        resampling_algorithm (str): Resampling algorithm to use. Must be one of:
-            "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
-            "max", "min", "med", "q1", "q3", "sum". Default is "near".
-
-    Returns:
-        str: Path to the output file with updated extent and resolution.
-    """
-
-    if resampling_algorithm not in [
-        "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
-        "max", "min", "med", "q1", "q3", "sum"
-    ]:
-        raise ValueError(
-            "resampling_algorithm must be one of: 'near', 'bilinear', 'cubic', 'cubicspline', 'lanczos', "
-            "'average', 'rms', 'mode', 'max', 'min', 'med', 'q1', 'q3', 'sum'"
-        )
-
-    gdalimage_input_crs = gdalimage_input.crs
-    gdalimage_target_crs = gdalimage_target.crs
-
-    xmin, ymin, xmax, ymax = gdalimage_target.xmin, gdalimage_target.ymin, gdalimage_target.xmax, gdalimage_target.ymax
-    x_res_target, y_res_target = gdalimage_target.x_res, gdalimage_target.y_res
-
-    output_filename = gdalimage_input.path + f'_{extension_string}'
-
-    warp_options = gdal.WarpOptions(
-        format="ENVI",
-        outputBounds=(xmin, ymin, xmax, ymax),
-        outputBoundsSRS=gdalimage_target_crs,
-        xRes=x_res_target,
-        yRes=abs(y_res_target),
-        dstSRS=gdalimage_target_crs,
-        srcSRS=gdalimage_input_crs,
-        resampleAlg=resampling_algorithm
-    )
-    gdal.Warp(
-        destNameOrDestDS=output_filename,
-        srcDSOrSrcDSTab=gdalimage_input.ds,
-        options=warp_options
-    )
-
-    print(f"{gdalimage_input.path} warped to {gdalimage_target_crs}: {output_filename}")
-
-    return GdalImage(output_filename)
 
 
 def gdalimage_to_unit16(gdalimage_input, extension_string = "u16", is_mica = False):

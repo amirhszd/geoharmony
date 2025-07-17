@@ -4,18 +4,37 @@ import cv2
 from tqdm import tqdm
 from osgeo import gdal, osr, gdal_array
 from geoharmony.tools.gdalimage import GdalImage
+import os
 
-def to_envi(array, gdalimage, path):
+def to_envi(array, gdalimage, path, dtype = None):
     """
     Write an array to an ENVI file using GDAL.
+
+    the default dtype is set to the gdalimage dtype. otherwise it is:
+    envi_datatypes = ["numpy.uint8", "numpy.int16", "numpy.int32", "numpy.float32", "numpy.float64", "numpy.complex64",
+    "numpy.complex128", "numpy.uint16", "numpy.uint32","numpy.int64", "numpy.uint64"]
+
     """
+
+    assert dtype is None or dtype in [
+        "numpy.uint8", "numpy.int16", "numpy.int32", "numpy.float32", "numpy.float64",
+        "numpy.complex64", "numpy.complex128", "numpy.uint16", "numpy.uint32",
+        "numpy.int64", "numpy.uint64"], f"dtype must be None or one of the supported ENVI datatypes, got {dtype}"
+
+    if dtype is None:
+        dtype = gdalimage.dtype_classes['gdal']
+
+    # if file already exists, remove it
+    if os.path.exists(path) and os.path.isfile(path):
+        os.remove(path)
+
     if array.shape[1] != gdalimage.rows or array.shape[2] != gdalimage.cols or array.shape[0] != gdalimage.bands:
         raise ValueError("Array shape does not match metadata: "
                          f"array shape {array.shape}, "
                          f"expected (bands={gdalimage.bands}, rows={gdalimage.rows}, cols={gdalimage.cols})")
 
     driver = gdal.GetDriverByName('ENVI')
-    out_ds = driver.Create(path, gdalimage.cols, gdalimage.rows, gdalimage.bands, gdalimage.dtype_classes['gdal'])
+    out_ds = driver.Create(path, gdalimage.cols, gdalimage.rows, gdalimage.bands, dtype)
 
     if out_ds is None:
         raise RuntimeError(f"Could not create dataset: {path}")
@@ -118,3 +137,80 @@ def save_crop_warp(target_gdalImage, ref_gdalImage, homography_matrix):
     to_envi(target_warped_bands, target_gdalImage_warped, target_gdalImage_warped.path)
 
     return GdalImage(target_gdalImage_warped.path)
+
+def set_zeros_base_ref(ref_gimg, target_gimg, dtype = "uint16"):
+
+    # Check if the two arrays are the same size
+    if ref_gimg.shape[1:] != target_gimg.shape[1:]:
+        raise ValueError("arrays are not the same size!")
+
+    # Load the first image
+    ref_arr = ref_gimg.read()
+    target_arr = target_gimg.read()
+
+    # Find indices where values are zero and setting it to zero
+    try:
+        zero_indices = np.nanmean(ref_arr,0) == 0
+        target_arr[:, zero_indices] = 0
+        to_envi(target_arr, target_gimg, target_gimg.path)
+    except:
+        print("Did not find zeros in the reference image! Moving on.")
+
+    return GdalImage(target_gimg.path)
+
+
+def warp_extent_res(gdalimage_input: GdalImage,
+                    gdalimage_target: GdalImage,
+                    extension_string: str,
+                    resampling_algorithm: str = "near") -> str:
+    """
+    Applies the extent and resolution of the target image to the input image.
+
+    Args:
+        gdalimage_input (GdalImage): The input image to be warped.
+        gdalimage_target (GdalImage): The target image whose extent and resolution will be used.
+        extension_string (str): Suffix or extension for the output file.
+        resampling_algorithm (str): Resampling algorithm to use. Must be one of:
+            "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
+            "max", "min", "med", "q1", "q3", "sum". Default is "near".
+
+    Returns:
+        str: Path to the output file with updated extent and resolution.
+    """
+
+    if resampling_algorithm not in [
+        "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
+        "max", "min", "med", "q1", "q3", "sum"
+    ]:
+        raise ValueError(
+            "resampling_algorithm must be one of: 'near', 'bilinear', 'cubic', 'cubicspline', 'lanczos', "
+            "'average', 'rms', 'mode', 'max', 'min', 'med', 'q1', 'q3', 'sum'"
+        )
+
+    gdalimage_input_crs = gdalimage_input.crs
+    gdalimage_target_crs = gdalimage_target.crs
+
+    xmin, ymin, xmax, ymax = gdalimage_target.xmin, gdalimage_target.ymin, gdalimage_target.xmax, gdalimage_target.ymax
+    x_res_target, y_res_target = gdalimage_target.x_res, gdalimage_target.y_res
+
+    output_filename = gdalimage_input.path + f'_{extension_string}'
+
+    warp_options = gdal.WarpOptions(
+        format="ENVI",
+        outputBounds=(xmin, ymin, xmax, ymax),
+        outputBoundsSRS=gdalimage_target_crs,
+        xRes=x_res_target,
+        yRes=abs(y_res_target),
+        dstSRS=gdalimage_target_crs,
+        srcSRS=gdalimage_input_crs,
+        resampleAlg=resampling_algorithm
+    )
+    gdal.Warp(
+        destNameOrDestDS=output_filename,
+        srcDSOrSrcDSTab=gdalimage_input.path,
+        options=warp_options
+    )
+
+    print(f"{gdalimage_input.path} warped to {gdalimage_target_crs}: {output_filename}")
+
+    return GdalImage(output_filename)

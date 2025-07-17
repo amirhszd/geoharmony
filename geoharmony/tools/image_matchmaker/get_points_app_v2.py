@@ -223,14 +223,14 @@ def make_dash_app(image1, image2, results_queue):
             point = clickData['points'][0]
             stored_points.append({'x': point['x'], 'y': point['y']})
         elif 'undo' in triggered_id:
-            if stored_points:
-                stored_points.pop()
+            stored_points.pop()
+            if len(fig.data) > 1:
+                fig.data = [fig.data[i] for i in range(len(fig.data) -1)]  # remove the last trace
         elif 'clear' in triggered_id:
             stored_points = []
+            fig.data = [fig.data[0]]
 
-
-        # fig_new = make_base_fig(image)
-
+        # if we added a point
         if stored_points:
             fig.add_trace(
                 go.Scatter(

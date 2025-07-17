@@ -13,9 +13,9 @@ import torch.nn.functional as F
 import torch
 from scipy.ndimage import median_filter
 import sys
-
+from geoharmony.tools.gdalwriter import to_envi
 from .utils import save_image_envi, load_image_envi_fast, load_image_envi, to_uint8
-
+from geoharmony.tools.gdalimage import GdalImage
 
 def shift_rows_from_model(hs_image_copy, model, y_old, x_old, n):
     """
@@ -228,7 +228,7 @@ def medfilt2d_gpu(image, kernel_size=3):
 
     return filtered_image
 
-def shape_shift_mpp(hs_filename,
+def shape_shift_mpp(_filename,
                     mica_filename,
                     hs_bands,
                     mica_band,
@@ -346,6 +346,153 @@ def shape_shift_mpp(hs_filename,
     save_image_envi(hs_arr_shapeshifted, hs_profile, ss_filename, dtype = "uint16",ext="")
 
     return ss_filename, ss_qa_filename
+
+
+
+
+
+def shape_shift_mpp_gimg(hs_gimg,
+                         mica_gimg,
+                         hs_bands,
+                         mica_band,
+                         pixel_shift = 3, kernel_size = 3,
+                         hs_waterfall_rows_band_number = -1,
+                         use_torch = True,
+                         num_threads = None,
+                         mica_mask_gimg = None):
+
+    if num_threads is None:
+        num_threads = os.cpu_count()
+
+    # Load the hyperspectral and Mica images
+    # hs_arr, hs_profile = load_image_envi_fast(hs_gimg)
+    # mica_arr, mica_profile = load_image_envi_fast(mica_gimg)
+    hs_arr, hs_profile = hs_gimg.read(band_last = True), hs_gimg.ds
+    mica_arr, mica_profile = mica_gimg.read(band_last = True), mica_gimg.ds
+    if mica_mask_gimg is None:
+        # mica_mask_arr, mica_mask_profile = load_image_envi_fast(mica_mask_filename)
+        mica_mask_arr, mica_mask_profile  = mica_mask_gimg.read(band_last = True), mica_mask_gimg.ds
+
+    # # Convert arrays to float16 to speed up processing
+    # hs_arr = hs_arr.astype(np.float16)
+    # mica_arr = mica_arr.astype(np.float16)
+
+    # Extract georectified rows and the original array
+    waterfall_rows = hs_arr[..., hs_waterfall_rows_band_number].squeeze()
+    hs_arr_shapeshifted = copy.copy(hs_arr)
+
+    # Generate image for hyperspectral bands
+    hs_image = np.mean(hs_arr[..., hs_bands], axis=2)
+    mica_image = mica_arr[..., mica_band].squeeze()  # Grabbing the last band in Mica
+    mica_mask_arr = mica_mask_arr.squeeze().astype(bool)
+
+    # List to save quality metrics
+    quality_metrics = []
+
+    def generate_index_chunks(total_length, chunk_size):
+        return [np.arange(i, min(i + chunk_size, total_length)) for i in range(0, total_length, chunk_size)]
+
+    row_value_chunks = generate_index_chunks(int(np.max(waterfall_rows)) + 1, num_threads)
+    # row_value_chunks = generate_index_chunks(50 + 1, num_threads)
+
+    pbar = tqdm(total = np.max(waterfall_rows),
+                position=0,
+                leave=True,
+                desc = "Finding SS transformations...")
+    results = []
+    y_olds_all = []
+    x_olds_all = []
+
+    # Process each chunk of rows
+    for row_value_chunk in row_value_chunks:
+        hs_images, mica_images, micamask_images, y_olds_offset, x_olds_offset = [], [], [], [], []
+        for row_value in row_value_chunk:
+
+            y_old, x_old = np.where(waterfall_rows == row_value)
+
+            if (row_value == 0) or ((len(x_old) < 5) or (len(y_old) < 5)):
+                continue
+
+            # grab the boundary box
+            min_row, min_col = np.min(y_old), np.min(x_old)
+            max_row, max_col = np.max(y_old), np.max(x_old)
+
+            hs_images.append(hs_image[min_row:max_row + 1, min_col:max_col+1])
+            mica_images.append(mica_image[min_row:max_row + 1, min_col:max_col+1])
+            micamask_images.append(mica_mask_arr[min_row:max_row + 1, min_col:max_col + 1])
+            y_olds_offset.append(y_old - y_old.min())
+            x_olds_offset.append(x_old - x_old.min())
+            y_olds_all.append(y_old)
+            x_olds_all.append(x_old)
+
+
+        if len(hs_images) == 0:
+            continue
+
+        args_list = list(zip(hs_images, mica_images, micamask_images, y_olds_offset, x_olds_offset, repeat(pixel_shift)))
+        with Pool(num_threads) as pool:
+            results.extend(pool.starmap(get_shift_from_mi_patch, args_list))
+
+        pbar.update(num_threads)
+
+    pbar = tqdm(total = len(results),
+                position=0,
+                leave=True,
+                desc = "Applying SS transformation to all bands.")
+    for c, result in enumerate(results):
+        linear_model, shift, quality_metric = result
+        if linear_model is not None:
+            hs_arr_shapeshifted, _, _ = shift_rows_from_model(hs_arr_shapeshifted,
+                                                                      linear_model,
+                                                                      y_olds_all[c],
+                                                                      x_olds_all[c],
+                                                                      shift)
+        pbar.update(1)
+
+    print(f"Overall relative improvement: {np.nansum(quality_metrics):.5f}.")
+
+    # pefroming median filtering to smooth out the old values
+    hs_arr_shapeshifted = medfilt3d(hs_arr_shapeshifted, kernel_size=kernel_size, use_torch = use_torch )
+
+    ss_qa_filename = hs_gimg.path + "_ss_qa"
+    ss_filename = hs_gimg.path + "_ss"
+
+    # Save the quality assurance image
+    # quality_raster_metadata = copy.copy(hs_profile)
+    # quality_raster_metadata["bands"] = "1"
+    # quality_raster_metadata["band names"] = "Error Band"
+    # del quality_raster_metadata["wavelength"]
+    # quality_raster = np.mean(np.abs(hs_arr_shapeshifted - hs_arr), axis = 2)
+    # # clipping quality raster to 2 and 98 percentile
+    # to_uint8 = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x)) * 255)
+    # quality_raster = to_uint8(quality_raster).astype("uint8")
+    # save_image_envi(quality_raster, quality_raster_metadata, ss_qa_filename, dtype = "uint8", ext="")
+
+    # for quality raster
+    quality_raster_metadata = copy.copy(hs_profile)
+    quality_raster_metadata.bands = 1
+    quality_raster_metadata.band_description = ["Error Band"]
+    quality_raster_metadata.band_nodata = []
+    quality_raster_metadata.band_stats = []
+    quality_raster = np.mean(np.abs(hs_arr_shapeshifted - hs_arr), axis = 2)
+
+    # clipping quality raster to 2 and 98 percentile
+    to_uint8 = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x)) * 255)
+    quality_raster = to_uint8(quality_raster).astype("uint8")
+    to_envi(np.moveaxis(quality_raster, 2, 0),
+            quality_raster_metadata,
+            ss_qa_filename,
+            dtype = "numpy.uint8")
+    # save_image_envi(quality_raster, quality_raster_metadata, ss_qa_filename, dtype = "uint8", ext="")
+    del quality_raster
+
+    # Save the SS image
+    # save_image_envi(hs_arr_shapeshifted, hs_profile, ss_filename, dtype = "uint16",ext="")
+    to_envi(np.moveaxis(hs_arr_shapeshifted, 2, 0),
+            hs_profile,
+            ss_filename)
+
+    return GdalImage(ss_filename), GdalImage(ss_qa_filename)
 
 
 

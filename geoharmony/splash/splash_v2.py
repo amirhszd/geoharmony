@@ -28,17 +28,19 @@ Parameters:
 Example:
     python splash.py --vnir_hdr /path/to/vnir.hdr --swir_hdr /path/to/swir.hdr --mica_hdr /path/to/mica.hdr --outfolder /path/to/output --manual_warping False --use_homography True --use_torch True --num_threads 4
 """
-
+import geoharmony.tools.gdalwriter
 from scripts.coregister import coregister_manual
 from scripts.coregister import coregister_automatic
 from scripts.shape_shifter import shape_shift_mpp
 from scripts.antspy_registration_onraster import main_vnir_swir as antspy_registration_vnir_swir
 from scripts.nonground_mask_creator import crop_image_to_extent
 from geoharmony.tools.image_matchmaker.image_matchmaker import coregister_gui
+from geoharmony.tools.gdalwriter import *
 import argparse
 import sys
 from scripts.utils import *
 import geoharmony.tools.gdalimage as gi
+from scripts.nonground_mask_creator import *
 
 
 class Color:
@@ -97,6 +99,8 @@ def splash(vnir_hdr,
     Returns:
         None
     """
+    #### TODO NEED TO MAKE EVERYTHING GETS PASTED IN THE OUTPUT FOLDER INSTEAD OF WHERE T
+
     start_time = time.time()
     # Creating an output folder to put intermediate and final results in
     os.makedirs(out_folder, exist_ok=True)
@@ -117,44 +121,46 @@ def splash(vnir_hdr,
     # # 1) upsample each of the datasets to match mica sense resolution
     print(" ")
     print(Color.BLUE + "------> Matching Micasense extent, resolution, and CRS to hyperspectral data..." + Color.END)
-    mica_hdr_vnirres = gi.warp_extent_res(mica_gimg_u16, vnir_gimg_u16, "vnirres2")
-    mica_hdr_swirres = gi.warp_extent_res(mica_gimg_u16, swir_gimg_u16, "swirres2")
+    mica_gimg_u16_vnirres = warp_extent_res(mica_gimg_u16, vnir_gimg_u16, "vnirres")
+    mica_gimg_u16_swirres = warp_extent_res(mica_gimg_u16, swir_gimg_u16, "swirres")
 
     print(" ")
     print(Color.BLUE + "------> Performing coregistration..." + Color.END)
-    if manual_warping:
-
-        #### TODO DONE UNTIL HERE NEED TO MAKE SURE IT WORKS NOW
-        vnir_hdr_warped = coregister_gui(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr, coreg_vnir_band_indices, out_folder, use_available_homography=use_available_homography, name = "vnir")
-        swir_hdr_warped = coregister_gui(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr, coreg_swir_band_indices, out_folder, use_available_homography=use_available_homography, name = "swir")
-
-
-        vnir_hdr_warped = coregister_manual(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr_u16, coreg_vnir_band_indices, use_available_homography=use_available_homography, name = "vnir")
-        swir_hdr_warped = coregister_manual(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr_u16, coreg_swir_band_indices, use_available_homography=use_available_homography, name = "swir")
-    else: # automatic coregistration using brute force technique
-        vnir_hdr_warped = coregister_automatic(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr_u16, coreg_vnir_band_indices, use_available_homography=use_available_homography, name = "vnir")
-        swir_hdr_warped = coregister_automatic(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr_u16, coreg_swir_band_indices, use_available_homography=use_available_homography, name = "swir")
+    vnir_gimg_u16_warped = coregister_gui(mica_gimg_u16_vnirres,
+                                          coreg_mica_band_indices,
+                                          vnir_gimg_u16,
+                                          coreg_vnir_band_indices,
+                                          out_folder,
+                                          use_available_homography=use_available_homography,
+                                          name = "vnir")
+    swir_gimg_u16_warped = coregister_gui(mica_gimg_u16_swirres,
+                                          coreg_mica_band_indices,
+                                          swir_gimg_u16,
+                                          coreg_swir_band_indices,
+                                          out_folder,
+                                          use_available_homography=use_available_homography,
+                                          name = "swir")
 
     print(" ")
     print(Color.BLUE + "------> Setting zeros in the mica data..." + Color.END)
     # setting zeros in the mica sense image so shapeshifter could do what it is supposed to; writing in place
-    # this overwrites the original file so no new output
-    set_zeros_inimage(vnir_hdr_warped, mica_hdr_vnirres)
-    set_zeros_inimage(swir_hdr_warped, mica_hdr_swirres)
+    mica_gimg_u16_vnirres = set_zeros_base_ref(vnir_gimg_u16_warped, mica_gimg_u16_vnirres)
+    mica_gimg_u16_swirres = set_zeros_base_ref(swir_gimg_u16_warped, mica_gimg_u16_swirres)
 
     # vnir_hdr_warped = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_0_rd_wr_or_u16_warped.hdr"
     # swir_hdr_warped = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_21872_nuc_rd_wr_or_u16_warped.hdr"
     # mica_hdr_vnirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_vnirres.hdr"
     # mica_hdr_swirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_swirres.hdr"
     # mica_mask = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask.tif"
-    from scripts.nonground_mask_creator import get_mask
-    mica_mask = get_mask(mica_hdr, mica_dsm_path)
 
-    # todo need to update this to use the gdal images instead
-    micamask_hdr_vnirres = warp_to_target_extent_res(mica_mask, vnir_hdr_warped, "vnirres")
-    micamask_hdr_swirres = warp_to_target_extent_res(mica_mask, swir_hdr_warped, "swirres")
-    set_zeros_inimage(vnir_hdr_warped, micamask_hdr_vnirres)
-    set_zeros_inimage(swir_hdr_warped, micamask_hdr_swirres)
+    # this entire section should be optional
+    if mica_dsm_path is not None:
+        mica_dsm_gimg = gi.GdalImage(mica_dsm_path)
+        mica_mask_gimg = get_mask_gimg(mica_gimg, mica_dsm_gimg)
+        mica_mask_gimg_vnirres = warp_extent_res(mica_mask_gimg, vnir_gimg_u16_warped, "vnirres")
+        mica_mask_gimg_swirres = warp_extent_res(mica_mask_gimg, swir_gimg_u16_warped, "swirres")
+        set_zeros_inimage(vnir_gimg_u16_warped, mica_mask_gimg_vnirres)
+        set_zeros_inimage(swir_gimg_u16_warped, mica_mask_gimg_swirres)
     # micamask_hdr_vnirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask_vnirres.hdr"
     # micamask_hdr_swirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask_swirres.hdr"
 
@@ -162,13 +168,14 @@ def splash(vnir_hdr,
     # # 3) run shapeshifter on both of the datasets
     print(" ")
     print(Color.BLUE + "------> Running Shape Shifter..." + Color.END)
-    vnir_hdr_warped_ss, vnir_hdr_warped_ss_qa = shape_shift_mpp(vnir_hdr_warped,
-                                                                mica_hdr_vnirres,
+    vnir_hdr_warped_ss, vnir_hdr_warped_ss_qa = shape_shift_mpp(vnir_gimg_u16_warped,
+                                                                swir_gimg_u16_warped,
                                                                 pixel_shift=pixel_shift, kernel_size=kernel_size,
                                                                 hs_bands=ss_vnir_band_indices,  # going with an average of 530-570 region
                                                                 mica_band=ss_vnir_mica_band_index, use_torch= use_torch,
                                                                 num_threads = num_threads,
-                                                                mica_mask_filename = micamask_hdr_vnirres)
+                                                                mica_mask_filename = mica_mask_gimg_vnirres)
+
     swir_hdr_warped_ss, swir_hdr_warped_ss_qa = shape_shift_mpp(swir_hdr_warped,
                                                                 mica_hdr_swirres,
                                                                 pixel_shift=pixel_shift, kernel_size=kernel_size,

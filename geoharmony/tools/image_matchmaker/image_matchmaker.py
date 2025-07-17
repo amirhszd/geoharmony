@@ -1,11 +1,12 @@
 # main.py
 import matplotlib.pyplot as plt
 import multiprocessing as mp
-from get_points_app_v2 import run_get_points_app
-from show_warped_app import run_show_warped_app
+from geoharmony.tools.image_matchmaker.get_points_app_v2 import run_get_points_app
+from geoharmony.tools.image_matchmaker.show_warped_app import run_show_warped_app
 import numpy as np
 import os
 import cv2
+from geoharmony.tools.gdalwriter import save_crop_warp
 
 
 def launch_get_points_app(img1, img2):
@@ -24,42 +25,13 @@ def launch_show_warped_app(image1, image2):
 
 
 def calc_homography(ref_points, target_points):
-    # point passed to homography should be x, y order
+
     ref_points = np.array(ref_points)
     target_points = np.array(target_points)
     M, mask = cv2.findHomography(ref_points, target_points, cv2.RANSAC, 5)
 
     return M
 
-    # run a small app that shows the target image warped to the reference image and shows the result
-    # if the use likes it we return the homography matrix if not we restart the process
-    ### APP2 BASICALLY WARPS THE TARGET IMAGE TO THE REFERENCE IMAGE USING THE HOMOGRAPHY MATRIX AND SHOWS IT TO THE USER
-
-    # Convert to float32 for accurate blending
-    mica_float = mica_image_uint8.astype(np.float32)
-    hs_float = hs_warped.astype(np.float32)
-    # Blend the two images with 50% transparency each
-    composite = 0.5 * mica_float + 0.5 * hs_float
-    # Clip and convert back to uint8
-    composite_uint8 = np.clip(composite, 0, 255).astype(np.uint8)
-
-    # launch the show warped app here
-    q, dash_process = launch_get_points_app(ref_image, target_image)
-    ref_pts, tgt_pts = q.get()
-    dash_process.join()
-
-
-
-    if not satisfied:
-        # we need to go back to the point picking GUI again so this function should return either a homography matrix or None
-        return None
-
-    # if the user is satisfied we return the homography matrix and save oout the image
-
-
-    ### write out saving out the warped image to file; incorporate in gdal image?
-
-    return M
 
 def get_points_gui(ref_image, target_image):
     """
@@ -83,6 +55,10 @@ def get_points_gui(ref_image, target_image):
     # block until user clicks Submit
     ref_pts, tgt_pts = q.get()
     dash_process.join()
+
+    # conver to x,y point pairs
+    ref_pts = np.array([[ref_pt["x"], ref_pt["y"]] for ref_pt in ref_pts])
+    tgt_pts = np.array([[tgt_pt["x"], tgt_pt["y"]] for tgt_pt in tgt_pts])
 
     return ref_pts, tgt_pts
 
@@ -113,12 +89,12 @@ def get_warped_gui(image1, image2):
 
 
 def coregister_gui(ref_gdalimage,
-                      ref_bands,
-                      target_gdalimage,
-                      target_bands,
-                      outfolder,
-                      use_available_homography=False,
-                      name=""):
+                  ref_bands,
+                  target_gdalimage,
+                  target_bands,
+                  outfolder,
+                  use_available_homography=False,
+                  name=""):
     """
     Coregister two images using manual point picking.
     the target image is warped to match the reference image using the picked points.
@@ -127,8 +103,8 @@ def coregister_gui(ref_gdalimage,
     name is the  extension added at the end of the warped and coregistered iamge.
     """
     # lets generate unint 8 images for display
-    ref_arr_uint8 = ref_gdalimage.read_display_image()
-    target_arr_uint8 = target_gdalimage.read_display_image()
+    ref_arr_uint8 = np.moveaxis(ref_gdalimage.read_display_image(ref_bands),0, 2)
+    target_arr_uint8 = np.moveaxis(target_gdalimage.read_display_image(target_bands), 0, 2)
 
     # homography file name
     homography_path = os.path.join(outfolder, f"homography_{name}.npy")
@@ -147,25 +123,16 @@ def coregister_gui(ref_gdalimage,
             # warp the target image using the homography matrix
             target_arr_warped = cv2.warpPerspective(target_arr_uint8, h_mat, (ref_arr_uint8.shape[1], ref_arr_uint8.shape[0]))
 
-            # blend the two images to show them with 50% transparency each
-            mica_float = ref_arr_uint8.astype(np.float32)
-            hs_float = target_arr_warped.astype(np.float32)
-            composite = 0.5 * mica_float + 0.5 * hs_float
-            composite_uint8 = np.clip(composite, 0, 255).astype(np.uint8)
-
             # send the new image to the GUI to show the warped image, if the response is True we move on if not we repeat the process
             response = get_warped_gui(ref_arr_uint8, target_arr_warped.astype(np.uint8))
-
-    # if successful we save the homography matrix to file
-    np.save(homography_path, h_mat)
+        np.save(homography_path, h_mat)
 
     # save the warped image to file using GDALimage
-    from geoharmony.tools.gdalwriter import save_crop_warp
     target_gdalimage_warped = save_crop_warp(target_gdalImage = target_gdalimage,
                                              ref_gdalImage = ref_gdalimage,
                                              homography_matrix= h_mat)
 
-    # save the warped image to file
+    return target_gdalimage_warped
 
 
 
