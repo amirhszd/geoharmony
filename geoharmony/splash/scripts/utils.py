@@ -10,11 +10,6 @@ from geoharmony.tools.gdalimage import GdalImage
 from geoharmony.tools.gdalwriter import warp_extent_res
 
 
-def to_uint8(x):
-    if len(x[np.nonzero(x)]) > 0:
-        return ((x - np.min(x[np.nonzero(x)])) / (np.max(x[np.nonzero(x)]) - np.min(x[np.nonzero(x)])) * 255).astype(np.uint8)
-    else:
-        return x.astype(np.uint8)
 
 
 # def save_image_envi_add_wr(new_arr, new_path, old_profile):

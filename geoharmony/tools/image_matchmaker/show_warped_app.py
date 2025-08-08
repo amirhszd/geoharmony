@@ -60,8 +60,8 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
 
     # ---------- Layout ----------
     app.layout = dbc.Container(fluid=True, children=[
-        dbc.Row(dbc.Col(html.H2("IMAGE MATCHMAKER", className="text-center fw-bold"), className="mt-3")),
-        dbc.Row(dbc.Col(html.H5("Adjust the slider to blend reference and warped target images.",
+        dbc.Row(dbc.Col(html.H2("Rigid Coregisteration", className="text-center fw-bold"), className="mt-3")),
+        dbc.Row(dbc.Col(html.H5("Adjust the slider to blend reference and warped target images and check the quality.",
                                 className="text-center text-muted mb-3"))),
 
         # Image
@@ -134,11 +134,3 @@ def run_show_warped_app(ref_arr, tgt_arr, results_queue):
     app = make_blend_app(ref_arr, tgt_arr, results_queue)
     threading.Thread(target=lambda: wait_then_open(8050), daemon=True).start()
     app.run(debug=False)
-
-# ---------- Stand-alone test ----------
-if __name__ == "__main__":
-    import cv2
-    ref = cv2.cvtColor(cv2.imread("ref.jpg"), cv2.COLOR_BGR2RGB)
-    tgt = cv2.cvtColor(cv2.imread("tgt.jpg"), cv2.COLOR_BGR2RGB)
-    q = None  # replace with mp.Queue() when using from parent script
-    run_blend_app(ref, tgt, q)

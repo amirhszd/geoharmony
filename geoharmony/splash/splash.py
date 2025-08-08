@@ -1,300 +1,283 @@
 """
 SPLASH: Spatial eLAstic Harmonization technique
 
+this version of splash performs elastic coregistration between VNIR-SWIR at the end instead
+of each of them together.
+
 Author: Amirhossein Hassanzadeh
 Email: axhcis@rit.edu
-Date: 06/15/2024
+Date: 07/24/2025
 
 Description:
 This script implements the SPLASH technique for harmonizing spatial and spectral data.
 It involves steps such as image loading, coregistration, cropping, and shape shifting.
-
-Usage:
-    python splash.py --vnir_hdr <path_to_vnir_hdr> --swir_hdr <path_to_swir_hdr> --mica_hdr <path_to_mica_hdr> --outfolder <output_folder> [--manual_warping <True/False>] [--use_homography <True/False>] [--use_torch <True/False>] [--num_threads <num_threads>]
-
-Parameters:
-    vnir_hdr (str): Path to the VNIR data with the waterfall band in the last channel.
-    swir_hdr (str): Path to the SWIR data with the waterfall band in the last channel.
-    mica_hdr (str): Path to the Micasense data stacked layer in order of RGB-RE-NIR.
-    outfolder (str): Directory to save intermediate and final results.
-    manual_warping (bool, optional): Enable manual warping using GUI. Default is False (automatic warping).
-    use_homography (bool, optional): Use available homography for coregistration. Default is True.
-    use_torch (bool, optional): Enable Torch median filtering. Will use CUDA GPU if available; otherwise, CPU is used. Default is True.
-    num_threads (int, optional): Number of threads to use for parallel processing. Defaults to the number of CPU cores available.
-
-Example:
-    python splash.py --vnir_hdr /path/to/vnir.hdr --swir_hdr /path/to/swir.hdr --mica_hdr /path/to/mica.hdr --outfolder /path/to/output --manual_warping False --use_homography True --use_torch True --num_threads 4
 """
-
-
-import os
-import time
-
-from scripts.utils import warp_to_target_extent_res, convert_to_uint16, set_zeros_inimage
-from scripts.coregister import coregister_manual
-from scripts.coregister import coregister_automatic
-from scripts.shape_shifter import shape_shift_mpp
-import numpy as np
-from scripts.antspy_registration_onraster import main as antspy_registration
-from scripts.antspy_registration_onraster import main_vnir_swir as antspy_registration_vnir_swir
-
-from scripts.utils import add_to_envi_header
+import os.path
+from scripts.shape_shifter import shape_shift_mpp_gimg
+from geoharmony.tools.image_matchmaker.launchers import coregister_gui
+from geoharmony.tools.gdalwriter import *
 import argparse
 import sys
-
-
+import geoharmony.tools.gdalimage as gi
+from scripts.nonground_mask_creator import *
+import warnings
+from scripts.antspy_registration_onraster import antspy_vnir_swir_gimg
+import copy
+from geoharmony.tools.gdalwriter import warp_extent_res
+from geoharmony.tools.gdalwriter import to_envi_scale
+from geoharmony.tools.image_matchmaker.launchers import get_splash_inputs
+import os
+import requests
+warnings.filterwarnings("ignore")
 
 class Color:
     BLUE = '\033[94m'
     END = '\033[0m'
 
-
-def splash(vnir_hdr,
-           swir_hdr,
-           mica_hdr,
-           mica_dsm_path,
-           out_folder,
-           coreg_vnir_band_indices = [25, 70, 115],
-           coreg_swir_band_indices = [10, 40, 90],
-           coreg_mica_band_indices=[0, 1, 2],
-           pixel_shift=3,
-           kernel_size=3,
-           ss_vnir_band_indices = np.arange(60, 77),
-           ss_swir_band_indices = np.arange(0,12),
-           ss_vnir_mica_band_index = -2,
-           ss_swir_mica_band_index = -1,
-           use_torch=True,
-           num_threads = None,
-           manual_warping = False,
-           use_available_homography=True):
-    """
-    Harmonizes spatial and spectral data using the SPLASH technique.
-
-    Steps:
-    1) Convert data to uint16 for faster processing.
-    2) Upsample Micasense data to VNIR and SWIR resolutions.
-    3) Perform coregistration of VNIR and SWIR data with Micasense data.
-    4) Set zeros in Micasense image for shapeshifting.
-    5) Run shapeshifter on VNIR and SWIR datasets.
-    6) Perform Antspy registration.
-
-    Parameters:
-        vnir_hdr (str): Path to the VNIR data with the waterfall band in the last channel.
-        swir_hdr (str): Path to the SWIR data with the waterfall band in the last channel.
-        mica_hdr (str): Path to the Micasense data stacked layer in order of RGB-RE-NIR.
-        out_folder (str): Directory to save intermediate and final results.
-        coreg_vnir_band_indices (list): Indices for VNIR bands used in coregistration.
-        coreg_swir_band_indices (list): Indices for SWIR bands used in coregistration.
-        coreg_mica_band_indices (list): Indices for Mica bands used in coregistration.
-        pixel_shift (int): Pixel shift value for shapeshifter. Default is 3.
-        kernel_size (int): Kernel size for shapeshifter. Default is 3.
-        ss_vnir_band_indices (array): Indices for VNIR bands used in shapeshifter.
-        ss_swir_band_indices (array): Indices for SWIR bands used in shapeshifter.
-        ss_vnir_mica_band_index (int): Mica band index for VNIR shapeshifter. Default is 1.
-        ss_swir_mica_band_index (int): Mica band index for SWIR shapeshifter. Default is -1.
-        use_torch (bool): Enable Torch median filtering, using CUDA GPU if available. Default is True.
-        num_threads (int): Number of threads to use for parallel processing. Defaults to the number of CPU cores available.
-        manual_warping (bool): Enable manual warping using GUI. Default is False (automatic warping).
-        use_available_homography (bool): Use available homography for coregistration. Default is True.
-
-    Returns:
-        None
-    """
-    # start_time = time.time()
-    # # # Creating an output folder to put intermediate and final results in
-    # # os.makedirs(out_folder, exist_ok=True)
-    # #
-    # # # 0) lets see if we can save some space and processing time by doing things in uint space
-    # print(Color.BLUE + "------> Converting all data to UINT16 for faster processing..." + Color.END)
-    # mica_hdr_u16, _ = convert_to_uint16(mica_hdr, out_folder, mica=True)
-    # vnir_hdr_u16, vnir_scale_coefficients = convert_to_uint16(vnir_hdr, out_folder)
-    # swir_hdr_u16, swir_scale_coefficients = convert_to_uint16(swir_hdr, out_folder)
-    #
-    # # # 1) upsample each of the datasets to match mica sense resolution
-    # print(" ")
-    # print(Color.BLUE + "------> Matching Micasense extent, resolution, and CRS to hyperspectral data..." + Color.END)
-    # mica_hdr_vnirres = warp_to_target_extent_res(mica_hdr_u16, vnir_hdr_u16, "vnirres")
-    # mica_hdr_swirres = warp_to_target_extent_res(mica_hdr_u16, swir_hdr_u16, "swirres")
-    # #
-    # # 2) coregister vnir and swir with mica
-    # print(" ")
-    # print(Color.BLUE + "------> Performing coregistration..." + Color.END)
-    # if manual_warping:
-    #     vnir_hdr_warped = coregister_manual(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr_u16, coreg_vnir_band_indices, use_available_homography=use_available_homography, name = "vnir")
-    #     swir_hdr_warped = coregister_manual(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr_u16, coreg_swir_band_indices, use_available_homography=use_available_homography, name = "swir")
-    # else: # automatic coregistration using brute force technique
-    #     vnir_hdr_warped = coregister_automatic(mica_hdr_vnirres, coreg_mica_band_indices, vnir_hdr_u16, coreg_vnir_band_indices, use_available_homography=use_available_homography, name = "vnir")
-    #     swir_hdr_warped = coregister_automatic(mica_hdr_swirres, coreg_mica_band_indices, swir_hdr_u16, coreg_swir_band_indices, use_available_homography=use_available_homography, name = "swir")
-    #
-    # print(" ")
-    # print(Color.BLUE + "------> Setting zeros in the mica data..." + Color.END)
-    # # setting zeros in the mica sense image so shapeshifter could do what it is supposed to; writing in place
-    # # this overwrites the original file so no new output
-    # set_zeros_inimage(vnir_hdr_warped, mica_hdr_vnirres)
-    # set_zeros_inimage(swir_hdr_warped, mica_hdr_swirres)
-
-    # vnir_hdr_warped = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_0_rd_wr_or_u16_warped.hdr"
-    # swir_hdr_warped = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_21872_nuc_rd_wr_or_u16_warped.hdr"
-    # mica_hdr_vnirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_vnirres.hdr"
-    # mica_hdr_swirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_swirres.hdr"
-    # mica_mask = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask.tif"
-    # from scripts.nonground_mask_creator import get_mask
-    # mica_mask = get_mask(mica_hdr, mica_dsm_path)
-    # micamask_hdr_vnirres = warp_to_target_extent_res(mica_mask, vnir_hdr_warped, "vnirres")
-    # micamask_hdr_swirres = warp_to_target_extent_res(mica_mask, swir_hdr_warped, "swirres")
-    # set_zeros_inimage(vnir_hdr_warped, micamask_hdr_vnirres)
-    # set_zeros_inimage(swir_hdr_warped, micamask_hdr_swirres)
-    micamask_hdr_vnirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask_vnirres.hdr"
-    micamask_hdr_swirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm_mask_swirres.hdr"
-
-
-    # # 3) run shapeshifter on both of the datasets
-    # print(" ")
-    # print(Color.BLUE + "------> Running Shape Shifter..." + Color.END)
-    # vnir_hdr_warped_ss, vnir_hdr_warped_ss_qa = shape_shift_mpp(vnir_hdr_warped,
-    #                                                             mica_hdr_vnirres,
-    #                                                             pixel_shift=pixel_shift, kernel_size=kernel_size,
-    #                                                             hs_bands=ss_vnir_band_indices,  # going with an average of 530-570 region
-    #                                                             mica_band=ss_vnir_mica_band_index, use_torch= use_torch,
-    #                                                             num_threads = num_threads,
-    #                                                             mica_mask_filename = micamask_hdr_vnirres)
-    # swir_hdr_warped_ss, swir_hdr_warped_ss_qa = shape_shift_mpp(swir_hdr_warped,
-    #                                                             mica_hdr_swirres,
-    #                                                             pixel_shift=pixel_shift, kernel_size=kernel_size,
-    #                                                             hs_bands=ss_swir_band_indices,
-    #                                                             mica_band=ss_swir_mica_band_index, use_torch= use_torch, num_threads = num_threads,
-    #                                                             mica_mask_filename = micamask_hdr_swirres)
-    #
-    vnir_hdr_warped_ss = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_0_rd_wr_or_u16_warped_ss.hdr"
-    swir_hdr_warped_ss = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/raw_21872_nuc_rd_wr_or_u16_warped_ss.hdr"
-    mica_hdr_vnirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_vnirres.hdr"
-    mica_hdr_swirres = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out/NURI_Gold_transparent_reflectance_all_u16_swirres.hdr"
-    print(" ")
-    print(Color.BLUE + "------> Running Antspy registration..." + Color.END)
-    # # 4) run antspy registration
-    # vnir_hdr_warped_ss_reg = antspy_registration(vnir_hdr_warped_ss,
-    #                                              mica_hdr_vnirres,
-    #                                              hs_bands = ss_vnir_band_indices,
-    #                                              mica_band = ss_vnir_mica_band_index,
-    #                                              mica_mask_filename = micamask_hdr_vnirres)
-    # swir_hdr_warped_ss_reg = antspy_registration(swir_hdr_warped_ss,
-    #                                              mica_hdr_swirres,
-    #                                              hs_bands = ss_swir_band_indices,
-    #                                              mica_band=ss_swir_mica_band_index,
-    #                                              mica_mask_filename = micamask_hdr_swirres)
-
-    # 4) run antspy registration between vnir and swir and vnir
-    # with the mask
-    vnir_hdr_warped_ss_reg = antspy_registration_vnir_swir(vnir_hdr_warped_ss,
-                                                 swir_hdr_warped_ss,
-                                                 mica_mask_filename = micamask_hdr_vnirres)
-    # without the mask
-    # vnir_hdr_warped_ss_reg = antspy_registration(vnir_hdr_warped_ss,
-    #                                              swir_hdr_warped_ss,
-    #                                              hs_bands = ss_vnir_band_indices,
-    #                                              mica_band = ss_vnir_mica_band_index,
-    #                                              mica_mask_filename = micamask_hdr_vnirres)
-
-
-    # lets read the header file again and rewrite it
-    # read the metadata and add the scale to it
-    add_to_envi_header(vnir_hdr_warped_ss_reg, "scale coefficients", vnir_scale_coefficients)
-    add_to_envi_header(swir_hdr_warped_ss_reg, "scale coefficients", swir_scale_coefficients)
-
-    print("Total time:", (time.time() - start_time)/60, "minutes")
-
-
 if __name__ == "__main__":
 
-    if len(sys.argv) > 1:
-        parser = argparse.ArgumentParser(
-            description='Run the SPLASH technique for spatial harmonization and registration of hyperspectral images.')
-        parser.add_argument('--vnir_hdr', type=str, required=True,
-                            help='Path to VNIR HDR file')
-        parser.add_argument('--swir_hdr', type=str, required=True,
-                            help='Path to SWIR HDR file')
-        parser.add_argument('--mica_hdr', type=str, required=True,
-                            help='Path to MICA HDR file')
-        parser.add_argument('--mica_dsm', type=str, required=True,
-                            help='Path to MICA DSM file')
-        parser.add_argument('--outfolder', type=str, required=True,
-                            help='Output folder')
-        parser.add_argument('--coreg_vnir_band_indices', nargs='+', type=int, default=[25, 70, 115],
-                            help='VNIR band indices for coregistration')
-        parser.add_argument('--coreg_swir_band_indices', nargs='+', type=int, default=[10, 40, 90],
-                            help='SWIR band indices for coregistration')
-        parser.add_argument('--coreg_mica_band_indices', nargs='+', type=int, default=[0, 1, 2],
-                            help='MICA band indices for coregistration')
-        parser.add_argument('--pixel_shift', type=int, default=3,
-                            help='Pixel shift value for shapeshifter')
-        parser.add_argument('--kernel_size', type=int, default=3,
-                            help='Kernel size for shapeshifter')
-        parser.add_argument('--ss_vnir_band_start', type=int, required=True,
-                            help='Start index for VNIR shapeshifter bands')
-        parser.add_argument('--ss_vnir_band_end', type=int, required=True,
-                            help='End index for VNIR shapeshifter bands')
-        parser.add_argument('--ss_vnir_mica_band', type=int, default=1,
-                            help='MICA band index for VNIR shapeshifter')
-        parser.add_argument('--ss_swir_band_start', type=int, required=True,
-                            help='Start index for SWIR shapeshifter bands')
-        parser.add_argument('--ss_swir_band_end', type=int, required=True,
-                            help='End index for SWIR shapeshifter bands')
-        parser.add_argument('--ss_swir_mica_band', type=int, default=-1,
-                            help='MICA band index for SWIR shapeshifter')
-        parser.add_argument('--use_torch', action="store_true",
-                            help='Enable Torch median filtering')
-        parser.add_argument('--num_threads', type=int, default=os.cpu_count(),
-                            help='Number of threads for parallel processing')
-        parser.add_argument('--manual_warping', action="store_true",
-                            help='Enable manual warping using GUI')
-        parser.add_argument('--use_homography', action="store_true",
-                            help='Use available homography for coregistration')
+    inputs = get_splash_inputs()
 
-        args = parser.parse_args()
+    vnir_path = inputs["vnir_path"]
+    swir_path = inputs["swir_path"]
+    mica_path = inputs["mica_path"]
+    mica_dsm_path = inputs["mica_dsm_path"]
+    out_folder = inputs["out_folder"]
+    save_to_memory = inputs["save_to_memory"]
+    num_threads = inputs["num_threads"]
 
-        ss_vnir_band_indices = np.arange(args.ss_vnir_band_start, args.ss_vnir_band_end)
-        ss_swir_band_indices = np.arange(args.ss_swir_band_start, args.ss_swir_band_end)
+    # coregistration parameters
+    use_available_homography = inputs["use_available_homography"]
+    coreg_vnir_band_indices = inputs["coreg_vnir_band_indices"]
+    coreg_swir_band_indices = inputs["coreg_swir_band_indices"]
+    coreg_mica_band_indices = inputs["coreg_mica_band_indices"]
 
+    ## shapeshifter parameters
+    pixel_shift = inputs["pixel_shift"]
+    kernel_size = inputs["kernel_size"]
+    ss_vnir_band_indices = np.arange(inputs["ss_vnir_band_indices"][0], inputs["ss_vnir_band_indices"][1] + 1)
+    ss_swir_band_indices = np.arange(inputs["ss_swir_band_indices"][0], inputs["ss_swir_band_indices"][1] + 1)
+    ss_vnir_mica_band_index = inputs["ss_vnir_mica_band_index"]
+    ss_swir_mica_band_index = inputs["ss_vnir_mica_band_index"]
 
-        # TODO you need to change the mica_dsm_fie
-        splash(args.vnir_hdr,
-               args.swir_hdr,
-               args.mica_hdr,
-               args.mica_dsm_file,
-               args.outfolder,
-               coreg_vnir_band_indices=args.coreg_vnir_band_indices,
-               coreg_swir_band_indices=args.coreg_swir_band_indices,
-               coreg_mica_band_indices=args.coreg_mica_band_indices,
-               pixel_shift=args.pixel_shift,
-               kernel_size=args.kernel_size,
-               ss_vnir_band_indices=ss_vnir_band_indices,
-               ss_swir_band_indices=ss_swir_band_indices,
-               ss_vnir_mica_band_index=args.ss_vnir_mica_band,
-               ss_swir_mica_band_index=args.ss_swir_mica_band,
-               use_torch=args.use_torch,
-               num_threads=args.num_threads,
-               manual_warping=args.manual_warping,
-               use_available_homography=args.use_homography)
+    # antspy registration parameters
+    ereg_vnir_overlap_band_indices = inputs["ereg_vnir_overlap_band_indices"]
+    ereg_swir_overlap_band_indices = inputs["ereg_swir_overlap_band_indices"]
+    antspy_kernel = inputs["elastic_kernel"]
+    sigma_color = inputs["elastic_sigma_color"]
+    sigma_space = inputs["elastic_sigma_space"]
+    steps = inputs["elastic_steps"]
+    flow_sigma = inputs["elastic_flow_sigma"]
 
+    ### for debugging purposes
+    ### the image paths and parameters
+    # vnir_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/vnir/raw_0_rd_wr_or_small"
+    # swir_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/swir/raw_21872_nuc_rd_wr_or_small"
+    # mica_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/micasense/NURI_Gold_transparent_reflectance_all_small"
+    # mica_dsm_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/micasense/NURI_Gold_dsm_small.tif"
+    # out_folder = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/out"
+    # save_to_memory = True # radio button to save to memory or not should output True or False
+    # num_threads = None # None defualts to max cpu count available
+    #
+    # # coregistration parameters
+    # use_available_homography = False
+    # coreg_vnir_band_indices = [25, 70, 115]
+    # coreg_swir_band_indices = [10, 40, 90]
+    # coreg_mica_band_indices = [0, 1, 2]
+    #
+    # ## shapeshifter parameters
+    # pixel_shift = 3
+    # kernel_size = 3
+    # ss_vnir_band_indices = np.arange(60, 77)
+    # ss_swir_band_indices = np.arange(0, 12)
+    # ss_vnir_mica_band_index = -2
+    # ss_swir_mica_band_index = -1
+    #
+    # # antspy registration parameters
+    # ereg_vnir_overlap_band_indices = None
+    # ereg_swir_overlap_band_indices = None
+    # antspy_kernel = 20
+    # sigma_color = 15
+    # sigma_space = 20
+    # steps = 8
+    # flow_sigma = 3
+
+    # creating folder
+    os.makedirs(out_folder, exist_ok=True)
+
+    memory_folder = '/vsimem' if save_to_memory else out_folder
+
+    # 0) lets see if we can save some space and processing time by doing things in uint space
+    print(Color.BLUE + "------> Converting all data to UINT16 for faster processing..." + Color.END)
+    mica_gimg = gi.GdalImage(mica_path)
+    vnir_gimg = gi.GdalImage(vnir_path)
+    swir_gimg = gi.GdalImage(swir_path)
+    mica_gimg_u16, _ = gi.gdalimage_to_unit16(mica_gimg, is_mica=True, output_folder=memory_folder)
+    vnir_gimg_u16, vnir_scale_coefficients = gi.gdalimage_to_unit16(vnir_gimg, output_folder=memory_folder)
+    swir_gimg_u16, swir_scale_coefficients = gi.gdalimage_to_unit16(swir_gimg, output_folder=memory_folder)
+
+    # # 1) upsample micasense data to VNIR and SWIR resolutions
+    print(" ")
+    print(Color.BLUE + "------> Performing coregistration on VNIR..." + Color.END)
+    mica_gimg_u16_vnirres = warp_extent_res(mica_gimg_u16, vnir_gimg_u16, "vnirres", output_folder=memory_folder)
+    vnir_gimg_u16_warped = coregister_gui(mica_gimg_u16_vnirres,
+                                          coreg_mica_band_indices,
+                                          vnir_gimg_u16,
+                                          coreg_vnir_band_indices,
+                                          memory_folder,
+                                          out_folder,
+                                          use_available_homography=use_available_homography,
+                                          name="vnir")
+    vnir_gimg_u16.unlink()
+
+    print(" ")
+    print(Color.BLUE + "------> Performing coregistration on SWIR..." + Color.END)
+    mica_gimg_u16_swirres = warp_extent_res(mica_gimg_u16, swir_gimg_u16, "swirres", output_folder=memory_folder)
+    swir_gimg_u16_warped = coregister_gui(mica_gimg_u16_swirres,
+                                          coreg_mica_band_indices,
+                                          swir_gimg_u16,
+                                          coreg_swir_band_indices,
+                                          memory_folder,
+                                          out_folder,
+                                          use_available_homography=use_available_homography,
+                                          name="swir")
+    swir_gimg_u16.unlink()
+    mica_gimg_u16.unlink()
+
+    ### OK!
+    # print(" ")
+    print(Color.BLUE + "------> Setting zeros in the mica data..." + Color.END)
+    # setting zeros in the mica sense image so shapeshifter could do what it is supposed to; writing in place
+    mica_gimg_u16_vnirres = set_zeros_base_ref(vnir_gimg_u16_warped, mica_gimg_u16_vnirres, output_folder = memory_folder)
+    mica_gimg_u16_swirres = set_zeros_base_ref(swir_gimg_u16_warped, mica_gimg_u16_swirres, output_folder = memory_folder)
+    ### OK!
+
+    # whether DSM data is available or not
+    if mica_dsm_path is not None:
+        mica_dsm_gimg = gi.GdalImage(mica_dsm_path)
+        mica_mask_gimg = get_mask_gimg(mica_gimg, mica_dsm_gimg, output_folder=memory_folder)
+        mica_mask_gimg_vnirres = warp_extent_res(mica_mask_gimg, vnir_gimg_u16_warped, "vnirres", output_folder=memory_folder)
+        mica_mask_gimg_swirres = warp_extent_res(mica_mask_gimg, swir_gimg_u16_warped, "swirres", output_folder=memory_folder)
+        mica_mask_gimg_vnirres = set_zeros_base_ref(vnir_gimg_u16_warped, mica_mask_gimg_vnirres, output_folder = memory_folder)
+        mica_mask_gimg_swirres = set_zeros_base_ref(swir_gimg_u16_warped, mica_mask_gimg_swirres, output_folder = memory_folder)
     else:
-        vnir_hdr = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/vnir/raw_0_rd_wr_or.hdr"
-        swir_hdr = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/swir/raw_21872_nuc_rd_wr_or.hdr"
-        mica_hdr = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_transparent_reflectance_all.hdr"
-        mica_dsm = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/micasense/NURI_Gold_dsm.tif"
-        out_folder = "/Volumes/T7/axhcis/Projects/NURI/data/20240719_argetsingerGold/out"
-        use_torch = True
-        num_threads = 8
-        manual_warping = True
-        use_homography = True
-        # todo add an option to get rid of intermediate files
-        # todo change back to ss_vnir_mica_band_index to 1 (green)
-        splash(vnir_hdr,
-               swir_hdr,
-               mica_hdr,
-               mica_dsm,
-               out_folder,
-               use_torch = use_torch,
-               num_threads = num_threads,
-               manual_warping = manual_warping,
-               use_available_homography= use_homography)
+        mica_mask_gimg_vnirres, mica_mask_gimg_swirres = None, None
+    ### OK!
+
+    # # 3) run shapeshifter on both of the datasets based on the mica data
+    print(" ")
+    print(Color.BLUE + "------> Running Shape Shifter for VNIR..." + Color.END)
+    vnir_gimg_u16_warped_ss, vnir_gimg_u16_warped_ss_qa = shape_shift_mpp_gimg(vnir_gimg_u16_warped,
+                                                                               mica_gimg_u16_vnirres,
+                                                                               pixel_shift=pixel_shift,
+                                                                               kernel_size=kernel_size,
+                                                                               hs_bands=ss_vnir_band_indices,
+                                                                               mica_band=ss_vnir_mica_band_index,
+                                                                               num_threads=num_threads,
+                                                                               mica_mask_gimg=mica_mask_gimg_vnirres,
+                                                                               output_folder=memory_folder)
+    mica_gimg_u16_vnirres.unlink()
+    vnir_gimg_u16_warped.unlink()
+    mica_mask_gimg_vnirres.unlink()
+
+    print(Color.BLUE + "------> Running Shape Shifter for SWIR..." + Color.END)
+    swir_gimg_u16_warped_ss, swir_gimg_u16_warped_ss_qa = shape_shift_mpp_gimg(swir_gimg_u16_warped,
+                                                                               mica_gimg_u16_swirres,
+                                                                               pixel_shift=pixel_shift,
+                                                                               kernel_size=kernel_size,
+                                                                               hs_bands=ss_swir_band_indices,
+                                                                               mica_band=ss_swir_mica_band_index,
+                                                                               num_threads=num_threads,
+                                                                               mica_mask_gimg=mica_mask_gimg_swirres,
+                                                                               output_folder=memory_folder)
+    mica_gimg_u16_swirres.unlink()
+    swir_gimg_u16_warped.unlink()
+    mica_mask_gimg_swirres.unlink()
+
+    ### OK
+
+
+    print(" ")
+    print(Color.BLUE + "------> Running Antspy registration..." + Color.END)
+    (swir_gimg_u16_warped_ss_ereg,
+     swir_gimg_u16_warped_ss_ereg_def,
+     swir_gimg_u16_warped_ss_ereg_qa,
+     final_mask) = antspy_vnir_swir_gimg(vnir_gimg_u16_warped_ss,
+                                         swir_gimg_u16_warped_ss,
+                                         vnir_overlap_band_indices=ereg_vnir_overlap_band_indices,
+                                         swir_overlap_band_indices=ereg_swir_overlap_band_indices,
+                                         output_folder=memory_folder,
+                                         kernel=antspy_kernel,
+                                         sigma_color=sigma_color,
+                                         sigma_space=sigma_space,
+                                         steps=steps,
+                                         flow_sigma=flow_sigma)
+    ### OK!
+
+    ###### ERROR PROPAGATION
+    print(" ")
+    print(Color.BLUE + "------> Error Propagation..." + Color.END)
+    ## MATCHGING SWIR TO VNIR
+    swir_gimg_u16_warped_ss_qa_vnirres = warp_extent_res(swir_gimg_u16_warped_ss_qa,
+                                                         vnir_gimg_u16_warped_ss_qa,
+                                                         "vnirres",
+                                                         "bilinear",
+                                                         output_folder=memory_folder)
+    #### EREG: MATCHING SWIR TO VNIR
+    swir_gimg_u16_warped_ss_ereg_qa_vnirres = warp_extent_res(swir_gimg_u16_warped_ss_ereg_qa,
+                                                              vnir_gimg_u16_warped_ss_qa,
+                                                              "vnirres",
+                                                              "bilinear",
+                                                              output_folder=memory_folder)
+    #### EREG: MATCHING SWIR TO VNIR
+    swir_gimg_u16_warped_ss_ereg_def_vnirres = warp_extent_res(swir_gimg_u16_warped_ss_ereg_def,
+                                                               vnir_gimg_u16_warped_ss_qa,
+                                                               "vnirres",
+                                                               "bilinear",
+                                                               output_folder=out_folder)
+    swir_gimg_u16_warped_ss_ereg_def.unlink()
+    ### OK!
+
+    # save the two images with coefficients applied to make life easier
+    # we want to write these to file as they are final images
+    to_envi_scale(swir_gimg_u16_warped_ss_ereg,
+                  swir_path + "_splash",
+                  swir_scale_coefficients,
+                  dtype=np.float64,
+                  drop_last_band=True,
+                  output_folder = out_folder)# this gets rid of the waterfall band
+    to_envi_scale(vnir_gimg_u16_warped_ss,
+                  vnir_path + "_splash",
+                  vnir_scale_coefficients,
+                  dtype=np.float64,
+                  drop_last_band=True,
+                  output_folder = out_folder)
+    # this gets rid of the waterfall band
+
+    # # loading all the images now and calculating the propagated error
+    swir_ereg_qa = swir_gimg_u16_warped_ss_ereg_qa_vnirres.read()
+    swir_ss_qa = swir_gimg_u16_warped_ss_qa_vnirres.read()
+    vnir_ss_qa = vnir_gimg_u16_warped_ss_qa.read()
+    swir_ereg_qa, swir_ss_qa, vnir_ss_qa = swir_ereg_qa.astype(float), swir_ss_qa.astype(float), vnir_ss_qa.astype(
+        float)
+    uncertainty = (swir_ereg_qa ** 2 + swir_ss_qa ** 2 + vnir_ss_qa) ** 0.5
+    uncertainty[final_mask] = 0
+
+    # for uncertainty raster
+    output_filename = swir_path + "_splash_qa"
+    to_uint8 = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x)) * 255)
+    uncertainty = to_uint8(uncertainty)
+    uncertainty_gimg = copy.copy(swir_gimg_u16_warped_ss_qa_vnirres)
+    uncertainty_gimg.bands = 1
+    uncertainty_gimg.band_description = ["SPLASH QA"]
+    uncertainty_gimg.band_nodata = []
+    uncertainty_gimg.band_stats = []
+    to_envi(uncertainty[None, ...],
+            uncertainty_gimg,
+            output_filename,
+            dtype=np.uint8,
+            output_folder=out_folder)
+
+    print(Color.BLUE + "------> All Done..." + Color.END)
+
 

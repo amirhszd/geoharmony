@@ -1,20 +1,7 @@
 import numpy as np
 from osgeo import gdal, osr, gdal_array
-
-envi_datatypes = {
-    1: [np.uint8, "numpy.uint8"],
-    2: [np.int16, "numpy.int16"],
-    3: [np.int32, "numpy.int32"],
-    4: [np.float32, "numpy.float32"],
-    5: [np.float64, "numpy.float64"],
-    6: [np.complex64, "numpy.complex64"],
-    9: [np.complex128, "numpy.complex128"],
-    12: [np.uint16, "numpy.uint16"],
-    13: [np.uint32, "numpy.uint32"],
-    14: [np.int64, "numpy.int64"],
-    15: [np.uint64, "numpy.uint64"]
-}
-
+from osgeo import gdalconst
+import os
 
 class GdalImage():
     def __init__(self, path: str):
@@ -32,6 +19,19 @@ class GdalImage():
         """
         # initialize the parent class gdalmetadata
         self.gdalmetadata(path)
+
+    def unlink(self):
+        gdal.Unlink(self.path)
+        gdal.Unlink(self.path + ".hdr")
+        gdal.Unlink(self.path + ".aux.xml")
+
+        # try removing if it exists locally
+        try: os.remove(self.path)
+        except: pass
+        try: os.remove(self.path + ".hdr")
+        except: pass
+        try: os.remove(self.path + ".aux.xml")
+        except: pass
 
     def read(self, bands: list = None, band_last = False):
         """
@@ -54,7 +54,7 @@ class GdalImage():
 
         return array if not band_last else np.moveaxis(array, 0, -1)
 
-    def read_display_image(self, bands: list):
+    def read_display_image(self, bands: list, band_last = False):
         """
         Returns a display-ready uint8 image from the data cube, suitable for visualization in a notebook or GUI.
 
@@ -66,19 +66,26 @@ class GdalImage():
         Returns:
             np.ndarray: uint8 image array with bands in the last dimension.
         """
-        arr = self.read(bands)
-        arr_uint8 = self.to_uint8(arr)
+        arr = self.read(bands, band_last= band_last)
+        arr_uint8 = self.to_uint8(arr, band_last = band_last)
         return arr_uint8
 
     @staticmethod
-    def to_uint8(array: np.ndarray) -> np.ndarray:
+    def to_uint8(array: np.ndarray, band_last = False) -> np.ndarray:
+        array[array<0] = 0
+        array = np.nan_to_num(array, 0)
         new_image = np.zeros_like(array)
-        for i in range(array.shape[0]):
-            x = array[i,...]
-            min = np.percentile(x, 2)
-            max = np.percentile(x, 98)
-            band = (x - min) / (max - min) * 255
-            new_image[i,...] = band
+
+        nbands = array.shape[-1] if band_last else array.shape[0]
+        for i in range(nbands):
+            x = array[...,i] if band_last else array[i,...]
+            min = np.nanpercentile(x, 2)
+            max = np.nanpercentile(x, 98)
+            band = (x - min)*255 / (max - min)
+            if band_last:
+                new_image[...,i] = band
+            else:
+                new_image[i,...] = band
         return new_image.astype(np.uint8)
 
     def gdalmetadata(self, path: str):
@@ -109,8 +116,8 @@ class GdalImage():
         srs = osr.SpatialReference()
         srs.ImportFromWkt(self.projection)
         srs.AutoIdentifyEPSG()
-        self.crs = srs.GetAuthorityCode("PROJCS") or srs.GetAuthorityCode("GEOGCS")
-        self.crs = "EPSG:" + self.crs
+        crs_code = srs.GetAuthorityCode("PROJCS") or srs.GetAuthorityCode("GEOGCS")
+        self.crs = f"EPSG:{crs_code}" if crs_code is not None else None
 
         # get image x and y pixel size
         self.x_res = self.geotransform[1]
@@ -125,7 +132,7 @@ class GdalImage():
         self.dtype_classes = {
             "gdal": self.dtype,
             "numpy": gdal_array.GDALTypeCodeToNumericTypeCode(self.dtype),
-            "string": gdal.GetDataTypeName(self.dtype)
+            "string": gdal.GetDataTypeName(self.dtype),
         }
 
         # grab dataset level metadata
@@ -163,8 +170,41 @@ class GdalImage():
         return lon_raster, lat_raster
 
 
-def gdalimage_to_unit16(gdalimage_input, extension_string = "u16", is_mica = False):
-    output_filename = gdalimage_input.path + f'_{extension_string}'
+    def get_wgs84_bounds(self):
+        """
+        Transforms the image's bounding box to WGS84 (EPSG:4326).
+        Returns [[south, west], [north, east]] as latitude-longitude pairs.
+        """
+
+        if self.crs == "EPSG:4326":
+            # If the image is already in WGS84, return bounds directly
+            return [[self.ymin, self.xmin], [self.ymax, self.xmax]]
+
+        # Set up source CRS from the dataset
+        src_srs = osr.SpatialReference()
+        src_srs.ImportFromEPSG(int(self.crs.split(":")[1]))
+        # Define target CRS (WGS84)
+        dst_srs = osr.SpatialReference()
+        dst_srs.ImportFromEPSG(4326)
+
+        # Create coordinate transformation
+        transform = osr.CoordinateTransformation(src_srs, dst_srs)
+
+        # Transform the lower-left corner easting/northing to lat/lon: need to flip the order
+        lat_min, lon_min, _ = transform.TransformPoint(self.xmin, self.ymin)
+        # Transform the upper-right corner (xmax, ymax)
+        lat_max, lon_max, _ = transform.TransformPoint(self.xmax, self.ymax)
+
+        # Return bounds in Leaflet-friendly [lat, lon] order
+        return [[lat_min, lon_min], [lat_max, lon_max]]
+
+
+def gdalimage_to_unit16(gdalimage_input,
+                        extension_string = "u16",
+                        is_mica = False,
+                        output_folder = None):
+
+    output_filename = os.path.join(output_folder, os.path.basename(gdalimage_input.path) + f'_{extension_string}')
     input_dtype_dict = gdalimage_input.dtype_classes
 
     if "uint" in input_dtype_dict["string"].lower():
@@ -194,7 +234,7 @@ def gdalimage_to_unit16(gdalimage_input, extension_string = "u16", is_mica = Fal
     translate_options = gdal.TranslateOptions(
         outputType=gdal.GDT_UInt16,
         scaleParams=scale_params,
-        format="ENVI"
+        format="ENVI",
     )
 
     # Run

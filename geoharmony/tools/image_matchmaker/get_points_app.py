@@ -24,25 +24,10 @@ def wait_then_open(port=8050, path=""):
             pass
         time.sleep(0.1)
 
-
-class DashLoggerHandler(logging.StreamHandler):
-    def __init__(self):
-        logging.StreamHandler.__init__(self)
-        self.queue = []
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.queue.append(msg)
-
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-dashLoggerHandler = DashLoggerHandler()
-logger.addHandler(dashLoggerHandler)
-
 # =========================
 #      MAIN DASH APP
 # =========================
-def make_dash_app(image1, image2, results_queue):
+def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_title="TARGET"):
     app = dash.Dash(
         __name__,
         external_stylesheets=[dbc.themes.FLATLY]  # pick any of the 30+ themes
@@ -68,17 +53,19 @@ def make_dash_app(image1, image2, results_queue):
     fig1 = make_base_fig(image1)
     fig2 = make_base_fig(image2)
 
-    def serve_layout(fig1, fig2):
+    def serve_layout(fig1, fig2, ref_title, tgt_title):
         return dbc.Container(fluid=True, children=[
 
             # ---------- Header ----------
             dbc.Row([
-                dbc.Col(html.H2("IMAGE MATCHMAKER", className="text-center fw-bold"))
+                dbc.Col(html.H2("Rigid Coregisteration", className="text-center fw-bold"))
             ], className="mt-3"),
 
             dbc.Row([
-                dbc.Col(html.H5("Use the left mouse button to drop X marks.",
-                                className="text-center text-muted mb-3"))
+                dbc.Col(html.H5(
+                    "Pick points spread across the image for best results. Left-click to drop X markers; zoom in to refine. Use Undo to step back or Clear to start over.",
+                    className="text-center text-muted mb-3"
+                ))
             ]),
 
             # ---------- Two responsive columns ----------
@@ -86,7 +73,7 @@ def make_dash_app(image1, image2, results_queue):
 
                 # ----- Reference side -----
                 dbc.Col(md=6, children=[
-                    html.H4("REFERENCE", className="text-center text-primary fw-bold"),
+                    html.H4(ref_title, className="text-center text-primary fw-bold"),
                     dbc.Card([
                         dcc.Graph(
                             id="image-left",
@@ -105,7 +92,7 @@ def make_dash_app(image1, image2, results_queue):
 
                 # ----- Target side -----
                 dbc.Col(md=6, children=[
-                    html.H4("TARGET", className="text-center text-primary fw-bold"),
+                    html.H4(tgt_title, className="text-center text-primary fw-bold"),
                     dbc.Card([
                         dcc.Graph(
                             id="image-right",
@@ -157,25 +144,12 @@ def make_dash_app(image1, image2, results_queue):
                 ])
             ]),
 
-            html.Div([
-                dcc.Interval(id='interval1', interval=5 * 1000, n_intervals=0),
-                html.H1(id='div-out', children='Log'),
-                html.Iframe(id='console-out', srcDoc='', style={'width': '50%', 'height': 400})
-            ]),
-
             # Stores
             dcc.Store(id="store-left", data=[]),
             dcc.Store(id="store-right", data=[])
         ])
 
-    app.layout = serve_layout(fig1, fig2)
-
-    @app.callback(
-        Output('console-out', 'srcDoc'),
-        Input('interval1', 'n_intervals'))
-    def update_output(n):
-        return ('\n'.join(dashLoggerHandler.queue)).replace('\n', '<BR>')
-
+    app.layout = serve_layout(fig1, fig2, ref_title, tgt_title)
 
     # =========================
     #      LEFT IMAGE CALLBACK
@@ -316,8 +290,33 @@ def make_dash_app(image1, image2, results_queue):
 # =========================
 #      RUN DASH APP
 # =========================
-def run_get_points_app(image1, image2, results_queue):
-    app = make_dash_app(image1, image2, results_queue)
+def run_get_points_app(image1, image2, name, results_queue):
+    ref_title = "Micasense"
+    if name == "vnir":
+        tgt_title = "VNIR"
+    elif name == "swir":
+        tgt_title = "SWIR"
+    app = make_dash_app(image1, image2, results_queue, ref_title, tgt_title)
     threading.Thread(target=lambda: wait_then_open(8050), daemon=True).start()
     app.run(debug=False)
 
+
+if __name__ == "__main__":
+    # load your images
+    image1 = plt.imread("/Users/amirhassanzadeh/Downloads/madonna.png")
+    image2 = plt.imread("/Users/amirhassanzadeh/Downloads/madonna.png")
+
+    # launch GUI
+    q, dash_proc = mp.Manager().Queue(), mp.Process(
+        target=run_get_points_app,
+        args=(image1, image2, q, "REFERENCE", "TARGET"),
+        daemon=True
+    )
+    dash_proc.start()
+
+    # block until user clicks Submit
+    ref_pts, tgt_pts = q.get()
+    print("Reference points:", ref_pts)
+    print("Target points:", tgt_pts)
+
+    dash_proc.join()
