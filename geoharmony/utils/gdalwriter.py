@@ -3,7 +3,7 @@ from osgeo import gdal
 import cv2
 from tqdm import tqdm
 from osgeo import gdal, osr, gdal_array
-from geoharmony.tools.gdalimage import GdalImage
+from geoharmony.utils.gdalimage import GdalImage
 import os
 import subprocess
 def remove_envi_file(path):

@@ -7,8 +7,8 @@ from tqdm import tqdm
 from multiprocessing import Pool
 import os
 from scipy.ndimage import median_filter
-from geoharmony.tools.gdalwriter import to_envi
-from geoharmony.tools.gdalimage import GdalImage
+from geoharmony.utils.gdalwriter import to_envi
+from geoharmony.utils.gdalimage import GdalImage
 
 def to_uint8(x):
     if len(x[np.nonzero(x)]) > 0:

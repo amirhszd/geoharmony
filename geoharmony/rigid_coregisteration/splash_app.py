@@ -1,5 +1,5 @@
 import os
-import geoharmony.tools.gdalimage as gi
+import geoharmony.utils.gdalimage as gi
 import dash
 from dash import callback_context
 import dash_bootstrap_components as dbc

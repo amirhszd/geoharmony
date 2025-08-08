@@ -5,9 +5,9 @@ from tqdm import tqdm
 import copy
 from multiprocessing import Pool
 from itertools import repeat
-from geoharmony.tools.gdalwriter import to_envi
-from geoharmony.tools.gdalimage import GdalImage
-from geoharmony.tools.gdalwriter import warp_extent_res
+from geoharmony.utils.gdalwriter import to_envi
+from geoharmony.utils.gdalimage import GdalImage
+from geoharmony.utils.gdalwriter import warp_extent_res
 
 def apply_transform(fixed, moving, transform):
 

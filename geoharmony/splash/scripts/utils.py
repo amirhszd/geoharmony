@@ -6,8 +6,8 @@ from tqdm import tqdm
 import time
 import numpy as np
 
-from geoharmony.tools.gdalimage import GdalImage
-from geoharmony.tools.gdalwriter import warp_extent_res
+from geoharmony.utils.gdalimage import GdalImage
+from geoharmony.utils.gdalwriter import warp_extent_res
 
 
 

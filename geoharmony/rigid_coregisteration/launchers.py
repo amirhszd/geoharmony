@@ -1,13 +1,13 @@
 # main.py
 import matplotlib.pyplot as plt
 import multiprocessing as mp
-from geoharmony.tools.image_matchmaker.get_points_app import run_get_points_app
-from geoharmony.tools.image_matchmaker.show_warped_app import run_show_warped_app
+from geoharmony.rigid_coregisteration.get_points_app import run_get_points_app
+from geoharmony.rigid_coregisteration.show_warped_app import run_show_warped_app
 import numpy as np
 import os
 import cv2
-from geoharmony.tools.gdalwriter import save_crop_warp
-from geoharmony.tools.image_matchmaker.splash_app import run_splash_app  # replace with the actual import
+from geoharmony.utils.gdalwriter import save_crop_warp
+from geoharmony.rigid_coregisteration.splash_app import run_splash_app  # replace with the actual import
 
 def launch_get_points_app(img1, img2, name):
     mgr = mp.Manager()

@@ -1,8 +1,8 @@
 from spectral.io import envi
 import numpy as np
 import argparse
-from geoharmony.tools.gdalwriter import save_image_envi_add_wr
-from geoharmony.tools.gdalimage import GdalImage
+from geoharmony.utils.gdalwriter import save_image_envi_add_wr
+from geoharmony.utils.gdalimage import GdalImage
 
 
 def main(envi_file):

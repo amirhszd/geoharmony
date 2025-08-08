@@ -6,10 +6,10 @@ from sklearn.cluster import MiniBatchKMeans
 from scipy.ndimage import binary_dilation
 from scipy.signal import medfilt2d
 import subprocess
-from geoharmony.tools.gdalimage import GdalImage
+from geoharmony.utils.gdalimage import GdalImage
 from osgeo import gdal
 
-from geoharmony.tools.gdalwriter import to_envi
+from geoharmony.utils.gdalwriter import to_envi
 
 
 def get_dsm_gimg(dsm_crop_gimg, kernel_size=30, output_folder=None):
