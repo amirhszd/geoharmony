@@ -13,22 +13,34 @@ This script implements the SPLASH technique for harmonizing spatial and spectral
 It involves steps such as image loading, coregistration, cropping, and shape shifting.
 """
 import os.path
-from scripts.shape_shifter import shape_shift_mpp_gimg
 from geoharmony.tools.image_matchmaker.launchers import coregister_gui
 from geoharmony.tools.gdalwriter import *
 import argparse
 import sys
 import geoharmony.tools.gdalimage as gi
-from scripts.nonground_mask_creator import *
 import warnings
-from scripts.antspy_registration_onraster import antspy_vnir_swir_gimg
-import copy
 from geoharmony.tools.gdalwriter import warp_extent_res
 from geoharmony.tools.gdalwriter import to_envi_scale
 from geoharmony.tools.image_matchmaker.launchers import get_splash_inputs
 import os
 import requests
+import copy
+import numpy as np
 warnings.filterwarnings("ignore")
+
+try:
+    from .scripts.shape_shifter import shape_shift_mpp_gimg
+    from .scripts.nonground_mask_creator import get_mask_gimg
+    from .scripts.antspy_registration_onraster import antspy_vnir_swir_gimg
+except ImportError:
+    import sys
+    import os
+    # Add the current directory to Python path for fallback imports
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, current_dir)
+    from scripts.shape_shifter import shape_shift_mpp_gimg
+    from scripts.nonground_mask_creator import get_mask_gimg
+    from scripts.antspy_registration_onraster import antspy_vnir_swir_gimg
 
 class Color:
     BLUE = '\033[94m'

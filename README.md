@@ -18,10 +18,7 @@ spectral fusion
 
 
 ## Installation
-1. **Install Python 3.11**  
-   Download and install Python 3.11 from the [official website](https://www.python.org/downloads/release/python-3110/).
-
-2. **Create new environment and install packages using the yml file**  
+1. **Create new environment and install packages using the yml file**  
    ```sh
    conda env create -f environment.yml
    ```
@@ -31,7 +28,7 @@ spectral fusion
     ```
 
 ## Example Usage
-To use the SPLASH algorithm for matching VNIR and SWIR data, run /geo_harmony/splash.py in the activated environment.
+To use the SPLASH algorithm for matching VNIR and SWIR data, run `/geo_harmony/splash.py` in the activated environment.
 The terminal shows the outputs of the algorithms and a web-browser interface opens to take in inputs and perform co-registration.
 
 ## Documentation
