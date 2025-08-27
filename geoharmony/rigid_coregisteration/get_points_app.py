@@ -62,10 +62,15 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
             ], className="mt-3"),
 
             dbc.Row([
-                dbc.Col(html.H5(
-                    "Pick points spread across the image for best results. Left-click to drop X markers; zoom in to refine. Use Undo to step back or Clear to start over.",
+                dbc.Col([html.H5(
+                    "Left-click to drop X markers; zoom in to refine. Use Undo to step back or Clear to start over.",
                     className="text-center text-muted mb-3"
-                ))
+                ),
+                    html.H5(
+                        "The quality of the warped image is dependent on the number and the quality of the picked correspondences.",
+                        className="text-center text-muted mb-3"
+                    )
+                ])
             ]),
 
             # ---------- Two responsive columns ----------

@@ -370,7 +370,7 @@ card_coreg = dbc.Card([
                     ], className="g-2 mb-3"),
 
                     dbc.Row([
-                        dbc.Label("Use available homography", width=5, className="col-form-label"),
+                        dbc.Label("Use available homography file", width=5, className="col-form-label"),
                         dbc.Col(
                             dbc.Checklist(
                                 options=[{"label": "", "value": "use_homography"}],
@@ -649,7 +649,7 @@ app.layout = html.Div(style={"paddingLeft": "150px", "paddingRight": "150px", "p
         dbc.Row(id="spinner-ui", style={"display": "none"}, children=[
             dbc.Col([
                 html.H4("Processing...", className="text-center mt-4"),
-                dbc.Spinner(size="lg", color="primary", fullscreen=True)
+                dbc.Spinner(size="lg", color="primary", fullscreen=True),
             ])
         ]),
 
