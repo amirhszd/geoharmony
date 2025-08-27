@@ -12,6 +12,28 @@ import requests
 import threading
 import logging
 
+text_style = {
+    "backgroundColor": "#f8f9fa",  # light gray
+    "border": "1px solid #ddd",
+    "borderRadius": "6px",
+    "padding": "12px",
+    "marginBottom": "10px",
+    "fontSize": "16px",
+    "lineHeight": "1.5",
+    "color": "#333"
+}
+
+instruction_text = """
+**How to use**
+
+- Left-click to add an **X** control point; zoom/pan to refine placement.
+- Pick **8–20** points on distinct, stable features.
+- Spread points **across the whole image**; avoid collinear clusters.
+- Skip moving/ambiguous features (shadows, water edges).
+- **Undo** removes the last point; **Clear** resets all points.
+- Quality improves with the **number** and **spatial coverage** of correspondences.
+"""
+
 def wait_then_open(port=8050, path=""):
     url = f"http://127.0.0.1:{port}/{path}"
     for _ in range(50):  # retry for ~5 seconds
@@ -62,15 +84,15 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
             ], className="mt-3"),
 
             dbc.Row([
-                dbc.Col([html.H5(
-                    "Left-click to drop X markers; zoom in to refine. Use Undo to step back or Clear to start over.",
-                    className="text-center text-muted mb-3"
-                ),
-                    html.H5(
-                        "The quality of the warped image is dependent on the number and the quality of the picked correspondences.",
-                        className="text-center text-muted mb-3"
-                    )
-                ])
+                dbc.Col(
+                    dbc.Card(
+                        dbc.CardBody(
+                            dcc.Markdown(instruction_text, className="mb-0")
+                        ),
+                        className="mb-3 shadow-sm",
+                    ),
+                    width=12
+                )
             ]),
 
             # ---------- Two responsive columns ----------

@@ -175,7 +175,8 @@ if __name__ == "__main__":
                                                                                output_folder=memory_folder)
     mica_gimg_u16_vnirres.unlink()
     vnir_gimg_u16_warped.unlink()
-    mica_mask_gimg_vnirres.unlink()
+    if mica_dsm_path is not None:
+        mica_mask_gimg_vnirres.unlink()
 
     print(Color.BLUE + "------> Running Shape Shifter for SWIR..." + Color.END)
     swir_gimg_u16_warped_ss, swir_gimg_u16_warped_ss_qa = shape_shift_mpp_gimg(swir_gimg_u16_warped,
@@ -189,7 +190,8 @@ if __name__ == "__main__":
                                                                                output_folder=memory_folder)
     mica_gimg_u16_swirres.unlink()
     swir_gimg_u16_warped.unlink()
-    mica_mask_gimg_swirres.unlink()
+    if mica_dsm_path is not None:
+        mica_mask_gimg_swirres.unlink()
 
     ### OK
 
