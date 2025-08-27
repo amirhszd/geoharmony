@@ -593,7 +593,7 @@ app.layout = html.Div(style={"paddingLeft": "150px", "paddingRight": "150px", "p
         dbc.Container([
             dbc.Row([
                 dbc.Col(
-                    html.Img(src="/assets/splash_logo.png", height="60px"),  # Adjust path if needed
+                    html.Img(src="/assets/splashlogo.png", height="100px"),  # Adjust path if needed
                     width="auto"
                 ),
                 dbc.Col(
