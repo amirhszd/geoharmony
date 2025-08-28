@@ -31,7 +31,7 @@ spectral fusion
     ```
 
 ## Example Usage
-To use the SPLASH algorithm for matching VNIR and SWIR data, run /geo_harmony/splash.py in the activated environment.
+To use the SPLASH algorithm for matching VNIR and SWIR data, run `/geo_harmony/splash.py` in the activated environment.
 The terminal shows the outputs of the algorithms and a web-browser interface opens to take in inputs and perform co-registration.
 
 ## Documentation
