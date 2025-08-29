@@ -31,6 +31,51 @@ class Color:
     BLUE = '\033[94m'
     END = '\033[0m'
 
+def convert_to_uint16_safe(gimg, file_path, is_mica=False, output_folder=None):
+    """
+    Safely convert GdalImage to uint16 with proper error handling.
+    
+    Args:
+        gimg: GdalImage object to convert
+        file_path: Path to the original file (for logging/error reporting)
+        is_mica: Boolean flag indicating if this is mica data processing
+        output_folder: Output folder for conversion
+    
+    Returns:
+        tuple: (converted_image, scale_coefficients) 
+               scale_coefficients will be None if not applicable
+    
+    Raises:
+        FileNotFoundError: If the source file doesn't exist
+        ValueError: If conversion fails
+    """
+    import os
+    
+    # Validate input file
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Source file not found: {file_path}")
+    
+    # Validate GdalImage object
+    if not isinstance(gimg, gi.GdalImage):
+        raise ValueError(f"Expected GdalImage object, got {type(gimg)}")
+    
+    try:
+        # Perform conversion
+        result = gi.gdalimage_to_unit16(gimg, is_mica=is_mica, output_folder=output_folder)
+        
+        # Handle different return types
+        if isinstance(result, tuple):
+            converted_image, scale_coefficients = result
+            return converted_image, scale_coefficients
+        else:
+            # Function returned single object (typically for mica data)
+            return result, None
+            
+    except Exception as e:
+        raise ValueError(f"Failed to convert {file_path} to uint16: {str(e)}")
+
+
+
 if __name__ == "__main__":
 
     inputs = get_splash_inputs()
@@ -106,13 +151,27 @@ if __name__ == "__main__":
 
     # 0) lets see if we can save some space and processing time by doing things in uint space
     print(Color.BLUE + "------> Converting all data to UINT16 for faster processing..." + Color.END)
+    # mica_gimg = gi.GdalImage(mica_path)
+    # vnir_gimg = gi.GdalImage(vnir_path)
+    # swir_gimg = gi.GdalImage(swir_path)
+    # mica_gimg_u16, _ = gi.gdalimage_to_unit16(mica_gimg, is_mica=True, output_folder=memory_folder)
+    # vnir_gimg_u16, vnir_scale_coefficients = gi.gdalimage_to_unit16(vnir_gimg, output_folder=memory_folder)
+    # swir_gimg_u16, swir_scale_coefficients = gi.gdalimage_to_unit16(swir_gimg, output_folder=memory_folder)
+
     mica_gimg = gi.GdalImage(mica_path)
     vnir_gimg = gi.GdalImage(vnir_path)
     swir_gimg = gi.GdalImage(swir_path)
-    mica_gimg_u16, _ = gi.gdalimage_to_unit16(mica_gimg, is_mica=True, output_folder=memory_folder)
-    vnir_gimg_u16, vnir_scale_coefficients = gi.gdalimage_to_unit16(vnir_gimg, output_folder=memory_folder)
-    swir_gimg_u16, swir_scale_coefficients = gi.gdalimage_to_unit16(swir_gimg, output_folder=memory_folder)
-
+    
+    try:
+        mica_gimg_u16, _ = convert_to_uint16_safe(mica_gimg, mica_path, is_mica=True, output_folder=memory_folder)
+        vnir_gimg_u16, vnir_scale_coefficients = convert_to_uint16_safe(vnir_gimg, vnir_path, is_mica=False, output_folder=memory_folder)
+        swir_gimg_u16, swir_scale_coefficients = convert_to_uint16_safe(swir_gimg, swir_path, is_mica=False, output_folder=memory_folder)
+        
+        print("✓ All datasets successfully converted to UINT16")
+        
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error during UINT16 conversion: {e}")
+        raise
     # # 1) upsample micasense data to VNIR and SWIR resolutions
     print(" ")
     print(Color.BLUE + "------> Performing coregistration on VNIR..." + Color.END)

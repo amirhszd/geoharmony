@@ -29,6 +29,7 @@ spectral fusion
    ```sh
     conda activate geo-harmony311
     ```
+ 
 
 ## Example Usage
 To use the SPLASH algorithm for matching VNIR and SWIR data, run `/geo_harmony/splash.py` in the activated environment.
