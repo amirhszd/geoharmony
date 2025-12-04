@@ -2,6 +2,7 @@ import numpy as np
 from osgeo import gdal, osr, gdal_array
 from osgeo import gdalconst
 import os
+from rasterio.crs import CRS
 
 class GdalImage():
     def __init__(self, path: str):
@@ -113,11 +114,11 @@ class GdalImage():
         self.shape = (self.bands, self.rows, self.cols)
 
         # get image CRS string
-        srs = osr.SpatialReference()
-        srs.ImportFromWkt(self.projection)
-        srs.AutoIdentifyEPSG()
-        crs_code = srs.GetAuthorityCode("PROJCS") or srs.GetAuthorityCode("GEOGCS")
-        self.crs = f"EPSG:{crs_code}" if crs_code is not None else None
+        crs_obj = CRS.from_wkt(self.projection)
+        crs_code = crs_obj.to_string()  # e.g., 'EPSG:32618'
+        self.crs = crs_code if crs_code is not None else None
+        if self.crs is None:
+            print(f"Warning: Could not determine CRS code from dataset projection: {self.path}")
 
         # get image x and y pixel size
         self.x_res = self.geotransform[1]
@@ -151,7 +152,9 @@ class GdalImage():
             # band nodata
             self.band_nodata.append(ds_band.GetNoDataValue())
             # band statistics
-            stats = ds_band.GetStatistics(False, True)
+            stats = ds_band.GetStatistics(True, False)
+            if stats is None:
+                stats = (0, 0, 0, 0)
             self.band_stats.append({
                 "min": stats[0],
                 "max": stats[1],
@@ -209,7 +212,7 @@ def gdalimage_to_unit16(gdalimage_input,
 
     if "uint" in input_dtype_dict["string"].lower():
         ## work with what we have it would be uint16 at worst
-        return gdalimage_input
+        return gdalimage_input, None
 
     # get max of all bands
     maxvals = np.array([band_stats["max"] for band_stats in gdalimage_input.band_stats])

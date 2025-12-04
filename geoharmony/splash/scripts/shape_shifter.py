@@ -214,8 +214,11 @@ def shape_shift_mpp_gimg(hs_gimg,
     waterfall_rows = hs_arr[..., hs_waterfall_rows_band_number].squeeze()
     hs_arr_shapeshifted = copy.copy(hs_arr)
 
+    # convert inf values to nan in hs_arr
+    hs_arr[np.isinf(hs_arr)] = np.nan
+
     # Generate image for hyperspectral bands
-    hs_image = np.mean(hs_arr[..., hs_bands], axis=2)
+    hs_image = np.nanmean(hs_arr[..., hs_bands], axis=2)
     mica_image = mica_arr[..., mica_band].squeeze()  # Grabbing the last band in Mica
 
     # List to save quality metrics

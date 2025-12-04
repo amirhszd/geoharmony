@@ -12,6 +12,8 @@ Description:
 This script implements the SPLASH technique for harmonizing spatial and spectral data.
 It involves steps such as image loading, coregistration, cropping, and shape shifting.
 """
+from sympy import false
+
 from scripts.shape_shifter import shape_shift_mpp_gimg
 from geoharmony.rigid_coregisteration.launchers import coregister_gui
 from geoharmony.utils.gdalwriter import *
@@ -33,71 +35,71 @@ class Color:
 
 if __name__ == "__main__":
 
-    inputs = get_splash_inputs()
-
-    vnir_path = inputs["vnir_path"]
-    swir_path = inputs["swir_path"]
-    mica_path = inputs["mica_path"]
-    mica_dsm_path = inputs["mica_dsm_path"]
-    out_folder = inputs["out_folder"]
-    save_to_memory = inputs["save_to_memory"]
-    num_threads = inputs["num_threads"]
-
-    # coregistration parameters
-    use_available_homography = inputs["use_available_homography"]
-    coreg_vnir_band_indices = inputs["coreg_vnir_band_indices"]
-    coreg_swir_band_indices = inputs["coreg_swir_band_indices"]
-    coreg_mica_band_indices = inputs["coreg_mica_band_indices"]
-
-    ## shapeshifter parameters
-    pixel_shift = inputs["pixel_shift"]
-    kernel_size = inputs["kernel_size"]
-    ss_vnir_band_indices = np.arange(inputs["ss_vnir_band_indices"][0], inputs["ss_vnir_band_indices"][1] + 1)
-    ss_swir_band_indices = np.arange(inputs["ss_swir_band_indices"][0], inputs["ss_swir_band_indices"][1] + 1)
-    ss_vnir_mica_band_index = inputs["ss_vnir_mica_band_index"]
-    ss_swir_mica_band_index = inputs["ss_vnir_mica_band_index"]
-
-    # antspy registration parameters
-    ereg_vnir_overlap_band_indices = inputs["ereg_vnir_overlap_band_indices"]
-    ereg_swir_overlap_band_indices = inputs["ereg_swir_overlap_band_indices"]
-    antspy_kernel = inputs["elastic_kernel"]
-    sigma_color = inputs["elastic_sigma_color"]
-    sigma_space = inputs["elastic_sigma_space"]
-    steps = inputs["elastic_steps"]
-    flow_sigma = inputs["elastic_flow_sigma"]
+    # inputs = get_splash_inputs()
+    #
+    # vnir_path = inputs["vnir_path"]
+    # swir_path = inputs["swir_path"]
+    # mica_path = inputs["mica_path"]
+    # mica_dsm_path = inputs["mica_dsm_path"]
+    # out_folder = inputs["out_folder"]
+    # save_to_memory = inputs["save_to_memory"]
+    # num_threads = inputs["num_threads"]
+    #
+    # # coregistration parameters
+    # use_available_homography = inputs["use_available_homography"]
+    # coreg_vnir_band_indices = inputs["coreg_vnir_band_indices"]
+    # coreg_swir_band_indices = inputs["coreg_swir_band_indices"]
+    # coreg_mica_band_indices = inputs["coreg_mica_band_indices"]
+    #
+    # ## shapeshifter parameters
+    # pixel_shift = inputs["pixel_shift"]
+    # kernel_size = inputs["kernel_size"]
+    # ss_vnir_band_indices = np.arange(inputs["ss_vnir_band_indices"][0], inputs["ss_vnir_band_indices"][1] + 1)
+    # ss_swir_band_indices = np.arange(inputs["ss_swir_band_indices"][0], inputs["ss_swir_band_indices"][1] + 1)
+    # ss_vnir_mica_band_index = inputs["ss_vnir_mica_band_index"]
+    # ss_swir_mica_band_index = inputs["ss_vnir_mica_band_index"]
+    #
+    # # antspy registration parameters
+    # ereg_vnir_overlap_band_indices = inputs["ereg_vnir_overlap_band_indices"]
+    # ereg_swir_overlap_band_indices = inputs["ereg_swir_overlap_band_indices"]
+    # antspy_kernel = inputs["elastic_kernel"]
+    # sigma_color = inputs["elastic_sigma_color"]
+    # sigma_space = inputs["elastic_sigma_space"]
+    # steps = inputs["elastic_steps"]
+    # flow_sigma = inputs["elastic_flow_sigma"]
 
     ### for debugging purposes
     ### the image paths and parameters
-    # vnir_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/vnir/raw_0_rd_wr_or_small"
-    # swir_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/swir/raw_21872_nuc_rd_wr_or_small"
-    # mica_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/micasense/NURI_Gold_transparent_reflectance_all_small"
-    # mica_dsm_path = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/micasense/NURI_Gold_dsm_small.tif"
-    # out_folder = "/Volumes/T7/axhcis/Projects/NURI/test_data/step2_splash/out"
-    # save_to_memory = True # radio button to save to memory or not should output True or False
-    # num_threads = None # None defualts to max cpu count available
-    #
-    # # coregistration parameters
-    # use_available_homography = False
-    # coreg_vnir_band_indices = [25, 70, 115]
-    # coreg_swir_band_indices = [10, 40, 90]
-    # coreg_mica_band_indices = [0, 1, 2]
-    #
-    # ## shapeshifter parameters
-    # pixel_shift = 3
-    # kernel_size = 3
-    # ss_vnir_band_indices = np.arange(60, 77)
-    # ss_swir_band_indices = np.arange(0, 12)
-    # ss_vnir_mica_band_index = -2
-    # ss_swir_mica_band_index = -1
-    #
-    # # antspy registration parameters
-    # ereg_vnir_overlap_band_indices = None
-    # ereg_swir_overlap_band_indices = None
-    # antspy_kernel = 20
-    # sigma_color = 15
-    # sigma_space = 20
-    # steps = 8
-    # flow_sigma = 3
+    vnir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/vnir/raw_0_rf_wr_or_utm"
+    swir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/swir/raw_1504_nuc_rf_wr_or_utm"
+    mica_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/mica/NURI_micasense_1133_transparent_mosaic_stacked"
+    mica_dsm_path = None
+    out_folder = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/out"
+    save_to_memory = False # radio button to save to memory or not should output True or False
+    num_threads = None # None defualts to max cpu count available
+
+    # coregistration parameters
+    use_available_homography = True
+    coreg_vnir_band_indices = [25, 70, 115]
+    coreg_swir_band_indices = [10, 40, 90]
+    coreg_mica_band_indices = [0, 1, 2]
+
+    ## shapeshifter parameters
+    pixel_shift = 3
+    kernel_size = 3
+    ss_vnir_band_indices = np.arange(60, 77)
+    ss_swir_band_indices = np.arange(1, 12)
+    ss_vnir_mica_band_index = -2
+    ss_swir_mica_band_index = -1
+
+    # antspy registration parameters
+    ereg_vnir_overlap_band_indices = np.arange(272 - 46, 272)
+    ereg_swir_overlap_band_indices = np.arange(1, 12)
+    antspy_kernel = 20
+    sigma_color = 15
+    sigma_space = 20
+    steps = 8
+    flow_sigma = 3
 
     # creating folder
     os.makedirs(out_folder, exist_ok=True)

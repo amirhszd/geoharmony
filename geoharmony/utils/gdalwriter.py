@@ -299,7 +299,8 @@ def warp_extent_res(gdalimage_input: GdalImage,
         yRes=abs(y_res_target),
         dstSRS=gdalimage_target_crs,
         srcSRS=gdalimage_input_crs,
-        resampleAlg=resampling_algorithm
+        resampleAlg=resampling_algorithm,
+        creationOptions=["STATISTICS=NO"]
     )
 
     gdal.Warp(destNameOrDestDS=output_filename, srcDSOrSrcDSTab=gdalimage_input.path, options=warp_options)
