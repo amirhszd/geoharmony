@@ -26,13 +26,13 @@ class GdalImage():
         gdal.Unlink(self.path + ".hdr")
         gdal.Unlink(self.path + ".aux.xml")
 
-        # try removing if it exists locally
-        try: os.remove(self.path)
-        except: pass
-        try: os.remove(self.path + ".hdr")
-        except: pass
-        try: os.remove(self.path + ".aux.xml")
-        except: pass
+        # # try removing if it exists locally
+        # try: os.remove(self.path)
+        # except: pass
+        # try: os.remove(self.path + ".hdr")
+        # except: pass
+        # try: os.remove(self.path + ".aux.xml")
+        # except: pass
 
     def read(self, bands: list = None, band_last = False):
         """

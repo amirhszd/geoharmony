@@ -78,9 +78,13 @@ def antspy_vnir_swir_gimg(vnir_gimg,
     vnir_arr = vnir_gimg.read(band_last = True)
     swir_arr = swir_gimg_vnirres.read(band_last = True)
 
+    # set inf values to nan in both vnir and swir
+    vnir_arr[np.isinf(vnir_arr)] = np.nan
+    swir_arr[np.isinf(swir_arr)] = np.nan
+
     # Calculate the mean of the specified hyperspectral bands
-    mean_vnir = np.mean(vnir_arr[..., vnir_overlap_band_indices], 2)
-    mean_swir = np.mean(swir_arr[..., swir_overlap_band_indices], 2)
+    mean_vnir = np.nanmean(vnir_arr[..., vnir_overlap_band_indices], 2)
+    mean_swir = np.nanmean(swir_arr[..., swir_overlap_band_indices], 2)
 
     # convert to uint8
     mean_vnir_uint8 = to_uint8(mean_vnir)

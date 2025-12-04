@@ -70,8 +70,8 @@ if __name__ == "__main__":
 
     ### for debugging purposes
     ### the image paths and parameters
-    vnir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/vnir/raw_0_rf_wr_or_utm"
-    swir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/swir/raw_1504_nuc_rf_wr_or_utm"
+    vnir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/vnir/raw_0_rf_wr_or"
+    swir_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/swir/raw_1504_nuc_rf_wr_or"
     mica_path = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/mica/NURI_micasense_1133_transparent_mosaic_stacked"
     mica_dsm_path = None
     out_folder = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/out"
@@ -127,7 +127,8 @@ if __name__ == "__main__":
                                           out_folder,
                                           use_available_homography=use_available_homography,
                                           name="vnir")
-    vnir_gimg_u16.unlink()
+    if memory_folder == '/vsimem':
+        vnir_gimg_u16.unlink()
 
     print(" ")
     print(Color.BLUE + "------> Performing coregistration on SWIR..." + Color.END)
@@ -140,8 +141,9 @@ if __name__ == "__main__":
                                           out_folder,
                                           use_available_homography=use_available_homography,
                                           name="swir")
-    swir_gimg_u16.unlink()
-    mica_gimg_u16.unlink()
+    if memory_folder == '/vsimem':
+        swir_gimg_u16.unlink()
+        mica_gimg_u16.unlink()
 
     ### OK!
     # print(" ")
@@ -175,10 +177,12 @@ if __name__ == "__main__":
                                                                                num_threads=num_threads,
                                                                                mica_mask_gimg=mica_mask_gimg_vnirres,
                                                                                output_folder=memory_folder)
-    mica_gimg_u16_vnirres.unlink()
-    vnir_gimg_u16_warped.unlink()
-    if mica_dsm_path is not None:
-        mica_mask_gimg_vnirres.unlink()
+    if memory_folder == '/vsimem':
+        mica_gimg_u16_vnirres.unlink()
+        vnir_gimg_u16_warped.unlink()
+        if mica_dsm_path is not None:
+            mica_mask_gimg_vnirres.unlink()
+
 
     print(Color.BLUE + "------> Running Shape Shifter for SWIR..." + Color.END)
     swir_gimg_u16_warped_ss, swir_gimg_u16_warped_ss_qa = shape_shift_mpp_gimg(swir_gimg_u16_warped,
@@ -190,10 +194,11 @@ if __name__ == "__main__":
                                                                                num_threads=num_threads,
                                                                                mica_mask_gimg=mica_mask_gimg_swirres,
                                                                                output_folder=memory_folder)
-    mica_gimg_u16_swirres.unlink()
-    swir_gimg_u16_warped.unlink()
-    if mica_dsm_path is not None:
-        mica_mask_gimg_swirres.unlink()
+    if memory_folder == '/vsimem':
+        mica_gimg_u16_swirres.unlink()
+        swir_gimg_u16_warped.unlink()
+        if mica_dsm_path is not None:
+            mica_mask_gimg_swirres.unlink()
 
     ### OK
 
@@ -236,7 +241,8 @@ if __name__ == "__main__":
                                                                "vnirres",
                                                                "bilinear",
                                                                output_folder=out_folder)
-    swir_gimg_u16_warped_ss_ereg_def.unlink()
+    if memory_folder == '/vsimem':
+        swir_gimg_u16_warped_ss_ereg_def.unlink()
     ### OK!
 
     # save the two images with coefficients applied to make life easier
