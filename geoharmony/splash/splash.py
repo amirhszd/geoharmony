@@ -76,7 +76,8 @@ if __name__ == "__main__":
     mica_dsm_path = None
     out_folder = "/Volumes/T7/axhcis/Projects/NURI/data_forpaper/tait/out"
     save_to_memory = False # radio button to save to memory or not should output True or False
-    num_threads = None # None defualts to max cpu count available
+    num_threads = int(8) # None defualts to max cpu count available
+    convert_to_uint16 = False
 
     # coregistration parameters
     use_available_homography = True
@@ -111,9 +112,16 @@ if __name__ == "__main__":
     mica_gimg = gi.GdalImage(mica_path)
     vnir_gimg = gi.GdalImage(vnir_path)
     swir_gimg = gi.GdalImage(swir_path)
-    mica_gimg_u16, _ = gi.gdalimage_to_unit16(mica_gimg, is_mica=True, output_folder=memory_folder)
-    vnir_gimg_u16, vnir_scale_coefficients = gi.gdalimage_to_unit16(vnir_gimg, output_folder=memory_folder)
-    swir_gimg_u16, swir_scale_coefficients = gi.gdalimage_to_unit16(swir_gimg, output_folder=memory_folder)
+    if convert_to_uint16:
+        mica_gimg_u16, _ = gi.gdalimage_to_unit16(mica_gimg, is_mica=True, output_folder=memory_folder)
+        vnir_gimg_u16, vnir_scale_coefficients = gi.gdalimage_to_unit16(vnir_gimg, output_folder=memory_folder)
+        swir_gimg_u16, swir_scale_coefficients = gi.gdalimage_to_unit16(swir_gimg, output_folder=memory_folder)
+    else:
+        mica_gimg_u16 = mica_gimg
+        vnir_gimg_u16 = vnir_gimg
+        swir_gimg_u16 = swir_gimg
+        vnir_scale_coefficients = None
+        swir_scale_coefficients = None
 
     # # 1) upsample micasense data to VNIR and SWIR resolutions
     print(" ")
@@ -247,18 +255,27 @@ if __name__ == "__main__":
 
     # save the two images with coefficients applied to make life easier
     # we want to write these to file as they are final images
-    to_envi_scale(swir_gimg_u16_warped_ss_ereg,
-                  swir_path + "_splash",
-                  swir_scale_coefficients,
-                  dtype=np.float64,
-                  drop_last_band=True,
-                  output_folder = out_folder)# this gets rid of the waterfall band
-    to_envi_scale(vnir_gimg_u16_warped_ss,
-                  vnir_path + "_splash",
-                  vnir_scale_coefficients,
-                  dtype=np.float64,
-                  drop_last_band=True,
-                  output_folder = out_folder)
+    if convert_to_uint16:
+        to_envi_scale(swir_gimg_u16_warped_ss_ereg,
+                      swir_path + "_splash",
+                      swir_scale_coefficients,
+                      dtype=np.float64,
+                      drop_last_band=True,
+                      output_folder = out_folder)# this gets rid of the waterfall band
+        to_envi_scale(vnir_gimg_u16_warped_ss,
+                      vnir_path + "_splash",
+                      vnir_scale_coefficients,
+                      dtype=np.float64,
+                      drop_last_band=True,
+                      output_folder = out_folder)
+        print(f"Final files are written to:\n"
+              f" {swir_path}" + "_splash\n"
+              f" {vnir_path}" + "_splash")
+    else:
+        print(f"Final files are written to:\n"
+              f" {swir_gimg_u16_warped_ss_ereg.path}\n"
+              f" {vnir_gimg_u16_warped_ss.path}")
+
     # this gets rid of the waterfall band
 
     # # loading all the images now and calculating the propagated error

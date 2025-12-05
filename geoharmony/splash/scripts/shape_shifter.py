@@ -227,7 +227,7 @@ def shape_shift_mpp_gimg(hs_gimg,
     # row_value_chunks = generate_index_chunks(int(np.max(waterfall_rows)) - 20,
     #                                          int(np.max(waterfall_rows)) + 1, num_threads)
 
-    pbar = tqdm(total = np.max(waterfall_rows) - int(np.min(waterfall_rows[waterfall_rows != 0])),
+    pbar = tqdm(total = int(np.max(waterfall_rows) - int(np.min(waterfall_rows[waterfall_rows != 0]))),
                 position=0,
                 leave=True,
                 desc = "Finding SS transformations...")
