@@ -8,7 +8,9 @@ reference image. It combines three processing stages:
 2. ShapeShifter adjusts acquisition rows in both hyperspectral images.
 3. ANTsPy SyN refines SWIR alignment to the corrected VNIR image.
 
-See the [SPLASH workflow overview figure](docs/images/splash_highlevel.pdf).
+[![SPLASH workflow overview](docs/images/splash_highlevel.png)](docs/images/splash_highlevel.pdf)
+
+[Download the workflow overview (PDF)](docs/images/splash_highlevel.pdf).
 
 This repository provides a workflow for processing your own data, with a local
 browser interface, a JSON configuration interface, and a generated synthetic
