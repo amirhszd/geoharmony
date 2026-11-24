@@ -1,4 +1,3 @@
-from itertools import repeat
 import copy
 import numpy as np
 from sklearn.linear_model import LinearRegression, RANSACRegressor
@@ -8,13 +7,19 @@ from multiprocessing import Pool
 import os
 from scipy.ndimage import median_filter
 from geoharmony.utils.gdalwriter import to_envi
-from geoharmony.utils.gdalimage import GdalImage
+import joblib
+import hashlib
+import tempfile
 
 def to_uint8(x):
-    if len(x[np.nonzero(x)]) > 0:
-        return ((x - np.min(x[np.nonzero(x)])) / (np.max(x[np.nonzero(x)]) - np.min(x[np.nonzero(x)])) * 255).astype(np.uint8)
-    else:
-        return x.astype(np.uint8)
+    x = np.asarray(x)
+    finite = np.isfinite(x)
+    result = np.zeros(x.shape, dtype=np.uint8)
+    if finite.any():
+        low, high = np.min(x[finite]), np.max(x[finite])
+        if high > low:
+            result[finite] = np.clip((x[finite] - low) * 255 / (high - low), 0, 255).astype(np.uint8)
+    return result
 
 def shift_rows_from_model(hs_image_copy, model, y_old, x_old, n):
     """
@@ -46,19 +51,16 @@ def shift_rows_from_model(hs_image_copy, model, y_old, x_old, n):
     y_new_model = model.predict(x_new)
     y_new = np.round(y_new_model - y_res).astype(int)
 
-    if len(y_new) < 10:
+    if len(y_new) <= 10:
         return None, None, None
 
-    # Check if new coordinates exceed image dimensions
-    if (x_new.max() >= hs_image_copy.shape[1]) or (y_new.max() >= hs_image_copy.shape[0]):
-        x_ins = np.where((x_new < hs_image_copy.shape[1]) & (x_new > 0))[0]
-        y_ins = np.where((y_new < hs_image_copy.shape[0]) & (y_new > 0))[0]
-        ins_indices = np.array(list(set(x_ins) & set(y_ins)))
-        y_new = y_new[ins_indices]
-        x_new = x_new.squeeze()[ins_indices]
-        hs_image_copy[y_new, x_new] = pixel_values[ins_indices]
-    else:
-        hs_image_copy[y_new, x_new.squeeze()] = pixel_values
+    x_new = x_new.ravel().astype(int)
+    valid = ((x_new >= 0) & (x_new < hs_image_copy.shape[1]) &
+             (y_new >= 0) & (y_new < hs_image_copy.shape[0]))
+    if not valid.any():
+        return None, None, None
+    x_new, y_new = x_new[valid], y_new[valid]
+    hs_image_copy[y_new, x_new] = pixel_values[valid]
 
     return hs_image_copy, x_new, y_new
 
@@ -82,9 +84,13 @@ def calculate_mi_patch(hs_patch, mica_patch):
     if hs_patch is None:
         return np.nan
 
-    # Convert patches to uint8 and then to int for compatibility with mutual information calculation
-    hs_patch = to_uint8(hs_patch).astype(int)
-    mica_patch = to_uint8(mica_patch).astype(int)
+    valid = np.isfinite(hs_patch) & np.isfinite(mica_patch)
+    if valid.sum() < 2:
+        return np.nan
+    hs_patch = to_uint8(np.asarray(hs_patch)[valid]).astype(int)
+    mica_patch = to_uint8(np.asarray(mica_patch)[valid]).astype(int)
+    if np.ptp(hs_patch) == 0 or np.ptp(mica_patch) == 0:
+        return np.nan
 
     # Calculate mutual information between the patches
     mi = normalized_mutual_information(hs_patch, mica_patch)
@@ -92,7 +98,7 @@ def calculate_mi_patch(hs_patch, mica_patch):
 
 
 
-def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, n=3):
+def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, n=3, random_state=None):
     """
 
     Determine pixel shift from mutual information (MI) between a hyperspectral image and a Mica image.
@@ -121,7 +127,8 @@ def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, 
         return None, np.nan, np.nan
 
     # Fit RANSAC regression model to find the best linear fit
-    model = RANSACRegressor(LinearRegression(), max_trials=20, residual_threshold=30).fit(x_old.reshape(-1, 1), y_old)
+    model = RANSACRegressor(LinearRegression(), max_trials=20, residual_threshold=30,
+                            random_state=random_state).fit(x_old.reshape(-1, 1), y_old)
 
     # lets make sure we have enough number of inliers
     inlier_mask = model.inlier_mask_
@@ -135,8 +142,20 @@ def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, 
     else:
         patch1 = hs_image
         patch2 = mica_image
+
+    # create a binary mask around the indices to grab a smaller area that the entire image patch
+    # binary_mask = np.zeros_like(patch1)
+    # binary_mask[y_old, x_old] = 1
+    # # dilate that mask 3 time
+    # from scipy import ndimage
+    # binary_mask = ndimage.binary_dilation(binary_mask, iterations = 10)
+    # mi_before = calculate_mi_patch(patch1[binary_mask],
+    #                                patch2[binary_mask])
+
     mi_before = calculate_mi_patch(patch1,
                                    patch2)
+    if not np.isfinite(mi_before) or mi_before <= 0:
+        return None, np.nan, np.nan
 
     # Generate pixel shifts
     pixel_shifts = np.arange(-n, +n + 1)
@@ -158,6 +177,7 @@ def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, 
             mi_after = calculate_mi_patch(hs_image_copy[micamask_image],
                                           mica_image[micamask_image])
         else:
+            # mi_after = calculate_mi_patch(hs_image_copy[binary_mask], mica_image[binary_mask])
             mi_after = calculate_mi_patch(hs_image_copy, mica_image)
 
         # Calculate MI quality metric
@@ -166,9 +186,12 @@ def get_shift_from_mi_patch(hs_image, mica_image, micamask_image, y_old, x_old, 
         linear_models.append(model)
 
     # Find the shift with the maximum MI quality metric
-    if len(linear_models) > 0:
-        argmax = np.argmax(mi_quality_metrics)
-        return linear_models[argmax], pixel_shifts[argmax], mi_quality_metrics[argmax]
+    if len(linear_models) > 0 and not all(np.isnan(mi_quality_metrics)):
+        argmax = np.nanargmax(mi_quality_metrics)
+        if mi_quality_metrics[argmax] > 0.0005: # if the improvement is bigger than 0.05% do it
+            return linear_models[argmax], pixel_shifts[argmax], mi_quality_metrics[argmax]
+        else:
+            return None, np.nan, np.nan
     else:
         return None, np.nan, np.nan
 
@@ -191,129 +214,142 @@ def medfilt3d(hs_arr_copy, kernel_size=3):
 def generate_index_chunks(min_val, max_val, chunk_size):
     return [np.arange(i, min(i + chunk_size, max_val)) for i in range(min_val, max_val, chunk_size)]
 
-def shape_shift_mpp_gimg(hs_gimg,
-                         mica_gimg,
-                         hs_bands,
-                         mica_band,
-                         pixel_shift = 3, kernel_size = 3,
-                         hs_waterfall_rows_band_number = -1,
-                         num_threads = None,
-                         mica_mask_gimg = None,
-                         output_folder = None):
-
-    if num_threads is None:
-        num_threads = os.cpu_count()
-
-    hs_arr = hs_gimg.read(band_last = True)
-    mica_arr = mica_gimg.read(band_last = True)
-    if mica_mask_gimg is not None:
-        mica_mask_arr  = mica_mask_gimg.read(band_last = True)
-        mica_mask_arr = mica_mask_arr.squeeze().astype(bool)
-
-    # Extract georectified rows and the original array
-    waterfall_rows = hs_arr[..., hs_waterfall_rows_band_number].squeeze()
-    hs_arr_shapeshifted = copy.copy(hs_arr)
-
-    # convert inf values to nan in hs_arr
-    hs_arr[np.isinf(hs_arr)] = np.nan
-
-    # Generate image for hyperspectral bands
-    hs_image = np.nanmean(hs_arr[..., hs_bands], axis=2)
-    mica_image = mica_arr[..., mica_band].squeeze()  # Grabbing the last band in Mica
-
-    # List to save quality metrics
-    quality_metrics = []
-    row_value_chunks = generate_index_chunks(int(np.min(waterfall_rows[waterfall_rows != 0])), int(np.max(waterfall_rows)) + 1, num_threads)
-    # row_value_chunks = generate_index_chunks(int(np.max(waterfall_rows)) - 20,
-    #                                          int(np.max(waterfall_rows)) + 1, num_threads)
-
-    pbar = tqdm(total = int(np.max(waterfall_rows) - int(np.min(waterfall_rows[waterfall_rows != 0]))),
-                position=0,
-                leave=True,
-                desc = "Finding SS transformations...")
-    results = []
-    y_olds_all = []
-    x_olds_all = []
-
-    # Process each chunk of rows
-    for row_value_chunk in row_value_chunks:
-        hs_images, mica_images, micamask_images, y_olds_offset, x_olds_offset = [], [], [], [], []
-        for row_value in row_value_chunk:
-
-            y_old, x_old = np.where(waterfall_rows == row_value)
-
-            if (row_value == 0) or ((len(x_old) < 5) or (len(y_old) < 5)):
-                continue
-
-            # grab the boundary box
-            min_row, min_col = np.min(y_old), np.min(x_old)
-            max_row, max_col = np.max(y_old), np.max(x_old)
-
-            hs_images.append(hs_image[min_row:max_row + 1, min_col:max_col+1])
-            mica_images.append(mica_image[min_row:max_row + 1, min_col:max_col+1])
-            if (mica_mask_gimg is not None) and (hs_image[min_row:max_row + 1, min_col:max_col+1].shape == mica_mask_arr[min_row:max_row + 1, min_col:max_col + 1].shape):
-                micamask_images.append(mica_mask_arr[min_row:max_row + 1, min_col:max_col + 1])
-            else:
-                micamask_images.append(None)
-
-            y_olds_offset.append(y_old - y_old.min())
-            x_olds_offset.append(x_old - x_old.min())
-            y_olds_all.append(y_old)
-            x_olds_all.append(x_old)
+def _row_groups(rows):
+    flat = rows.ravel()
+    positions = np.flatnonzero(np.isfinite(flat) & (flat > 0))
+    if not len(positions):
+        return []
+    if np.any(flat[positions] != np.floor(flat[positions])):
+        raise ValueError('Acquisition-row identifiers must be integers; use nearest-neighbor resampling.')
+    positions = positions[np.argsort(flat[positions], kind='stable')]
+    values, starts, counts = np.unique(flat[positions], return_index=True, return_counts=True)
+    return [(int(value), np.divmod(positions[start:start+count], rows.shape[1]))
+            for value, start, count in zip(values, starts, counts) if count >= 5]
 
 
-        if len(hs_images) == 0:
-            continue
+def _row_seed(seed, name, row):
+    if seed is None:
+        return None
+    digest = int.from_bytes(hashlib.sha256(str(name).encode()).digest()[:4], 'little')
+    return int(np.random.SeedSequence([int(seed), digest, int(row)]).generate_state(1)[0])
 
-        args_list = list(zip(hs_images, mica_images, micamask_images, y_olds_offset, x_olds_offset, repeat(pixel_shift)))
-        with Pool(num_threads) as pool:
-            results.extend(pool.starmap(get_shift_from_mi_patch, args_list))
-        pbar.update(num_threads)
 
-    pbar = tqdm(total = len(results),
-                position=0,
-                leave=True,
-                desc = "Applying SS transformation to all bands.")
-    for c, result in enumerate(results):
-        linear_model, shift, quality_metric = result
-        print(f"{c}: {linear_model} - {shift} - {quality_metric}")
-        if linear_model is not None:
-            hs_arr_shapeshifted, _, _ = shift_rows_from_model(hs_arr_shapeshifted,
-                                                                      linear_model,
-                                                                      y_olds_all[c],
-                                                                      x_olds_all[c],
-                                                                      shift)
-        pbar.update(1)
+def _image_fingerprint(image):
+    stat = os.stat(image.path) if not image.path.startswith('/vsimem/') else None
+    return {'path': image.path, 'size': stat.st_size if stat else None,
+            'mtime_ns': stat.st_mtime_ns if stat else None, 'shape': list(image.shape),
+            'transform': list(image.geotransform), 'projection': image.projection}
 
-    print(f"Overall relative improvement: {np.nansum(quality_metrics):.5f}.")
 
-    # pefroming median filtering to smooth out the old values
-    hs_arr_shapeshifted = medfilt3d(hs_arr_shapeshifted, kernel_size=kernel_size)
+def _save_models(path, payload):
+    descriptor, temporary = tempfile.mkstemp(prefix='.models-', dir=os.path.dirname(path))
+    os.close(descriptor)
+    try:
+        joblib.dump(payload, temporary)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
 
-    ss_qa_filename = hs_gimg.path + "_ss_qa"
-    ss_filename = hs_gimg.path + "_ss"
 
-    # for quality raster
-    quality_raster_gimg = copy.copy(hs_gimg)
-    quality_raster_gimg.bands = 1
-    quality_raster_gimg.band_description = ["Error Band"]
-    quality_raster_gimg.band_nodata = []
-    quality_raster_gimg.band_stats = []
-    quality_raster = np.mean(np.abs(hs_arr_shapeshifted - hs_arr), axis = 2)
+def shape_shift_mpp_gimg(hs_gimg, mica_gimg, hs_bands, mica_band,
+                        pixel_shift=3, kernel_size=3, hs_waterfall_rows_band_number=-1,
+                        num_threads=None, mica_mask_gimg=None, output_folder=None,
+                        use_available_model=False, name=None, random_seed=None,
+                        model_folder=None):
+    """Fit reproducible row corrections and apply them to every spectral band.
 
-    # clipping quality raster to 2 and 98 percentile
-    to_uint8 = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x)) * 255)
-    quality_raster = to_uint8(quality_raster).astype(np.uint8)
-    ss_qa_gimage = to_envi(quality_raster[None,...],
-            quality_raster_gimg,
-            ss_qa_filename,
-            dtype = np.uint8,
-            output_folder=output_folder)
-
-    # Save the SS image
-    ss_gimage = to_envi(np.moveaxis(hs_arr_shapeshifted, 2, 0),
-            hs_gimg,
-            ss_filename,
-            output_folder=output_folder)
-
-    return ss_gimage, ss_qa_gimage
+    The row plane defines image support; valid zero-valued measurements are
+    retained. Models live on disk even when intermediate rasters use /vsimem.
+    New caches include input/settings/row associations; legacy lists are rejected.
+    """
+    workers = os.cpu_count() if num_threads is None else int(num_threads)
+    if workers < 1 or int(pixel_shift) != pixel_shift or pixel_shift < 0:
+        raise ValueError('Worker count must be positive and pixel_shift a nonnegative integer.')
+    if kernel_size < 1 or int(kernel_size) != kernel_size or kernel_size % 2 != 1:
+        raise ValueError('Median kernel size must be a positive odd integer.')
+    hs_bands = [int(index) for index in hs_bands]
+    row_index = hs_waterfall_rows_band_number % hs_gimg.bands
+    if row_index != hs_gimg.bands - 1:
+        raise ValueError('The acquisition-row plane must be the final input band.')
+    if not hs_bands or any(index < 0 or index >= row_index for index in hs_bands):
+        raise ValueError('Scoring bands must be nonempty spectral-band indices, excluding the row plane.')
+    if mica_band is None or not (-mica_gimg.bands <= int(mica_band) < mica_gimg.bands):
+        raise ValueError('A valid single MSI band is required.')
+    cache_folder = model_folder or output_folder or os.path.dirname(hs_gimg.path) or '.'
+    if str(cache_folder).startswith('/vsimem'):
+        raise ValueError('model_folder must be a disk directory when raster output uses /vsimem.')
+    os.makedirs(cache_folder, exist_ok=True)
+    cache_path = os.path.join(cache_folder, f'results_{name or "hs"}.pkl')
+    hs_arr = hs_gimg.read(band_last=True)
+    mica_image = mica_gimg.read(int(mica_band) % mica_gimg.bands + 1).astype(np.float32)
+    if mica_image.shape != hs_arr.shape[:2]:
+        raise ValueError('HS and MSI grids must have equal dimensions before ShapeShifter.')
+    rows = hs_arr[..., row_index]
+    support = np.isfinite(rows) & (rows > 0)
+    groups = _row_groups(rows)
+    scoring = hs_arr[..., hs_bands].astype(np.float32)
+    scoring[~np.isfinite(scoring)] = np.nan
+    scoring[~support] = np.nan
+    for channel, index in enumerate(hs_bands):
+        nodata = hs_gimg.band_nodata[index]
+        if nodata is not None and nodata != 0:
+            scoring[..., channel][scoring[..., channel] == nodata] = np.nan
+    count = np.isfinite(scoring).sum(axis=2)
+    mean = np.divide(np.nansum(scoring, axis=2), count, out=np.full(rows.shape, np.nan, np.float32), where=count > 0)
+    del scoring
+    mica_nodata = mica_gimg.band_nodata[int(mica_band) % mica_gimg.bands]
+    if mica_nodata is not None:
+        mica_image[mica_image == mica_nodata] = np.nan
+    mask = mica_mask_gimg.read().squeeze().astype(bool) if mica_mask_gimg is not None else None
+    settings = {'schema': 1, 'kernel_version': 'float-support-v1', 'hs': _image_fingerprint(hs_gimg),
+                'msi': _image_fingerprint(mica_gimg), 'bands': hs_bands, 'mica_band': int(mica_band),
+                'pixel_shift': int(pixel_shift), 'median_kernel': int(kernel_size), 'seed': random_seed,
+                'mask': _image_fingerprint(mica_mask_gimg) if mica_mask_gimg is not None else None,
+                'row_ids': [row for row, _ in groups]}
+    if use_available_model:
+        payload = joblib.load(cache_path)
+        if not isinstance(payload, dict) or payload.get('settings') != settings or not payload.get('complete'):
+            raise ValueError('Saved ShapeShifter cache is legacy, incomplete, or incompatible with this input/configuration.')
+        results = payload['results']
+        if len(results) != len(groups):
+            raise ValueError('Saved model count does not match acquisition rows.')
+    else:
+        results = []
+        pool = Pool(workers) if workers > 1 else None
+        try:
+            for start in tqdm(range(0, len(groups), workers), desc='Finding SS transformations'):
+                tasks = []
+                for row, (yy, xx) in groups[start:start+workers]:
+                    region = np.s_[yy.min():yy.max()+1, xx.min():xx.max()+1]
+                    tasks.append((mean[region], mica_image[region], mask[region] if mask is not None else None,
+                                  yy-yy.min(), xx-xx.min(), int(pixel_shift), _row_seed(random_seed, name, row)))
+                results.extend(pool.starmap(get_shift_from_mi_patch, tasks) if pool is not None else
+                               [get_shift_from_mi_patch(*task) for task in tasks])
+                _save_models(cache_path, {'settings': settings, 'complete': len(results) == len(groups), 'results': results})
+            if not groups:
+                _save_models(cache_path, {'settings': settings, 'complete': True, 'results': []})
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
+    shifted = hs_arr.copy()
+    for (_, (yy, xx)), (model, shift, quality) in zip(groups, results):
+        if model is not None:
+            candidate, _, _ = shift_rows_from_model(shifted, model, yy, xx, shift)
+            if candidate is not None:
+                shifted = candidate
+    shifted = medfilt3d(shifted, kernel_size=int(kernel_size))
+    # Median filtering must not manufacture data outside the acquisition support.
+    shifted[shifted[..., -1] == 0, :-1] = 0
+    difference = np.zeros(rows.shape, np.float32)
+    for band in range(row_index):
+        difference += np.abs(shifted[..., band].astype(np.float32) - hs_arr[..., band]) / row_index
+    quality = to_uint8(difference)
+    qa_image = copy.copy(hs_gimg)
+    qa_image.bands = 1
+    qa_image.band_description = ['ShapeShifter radiometric difference (display QA)']
+    qa_image.band_nodata = [None]
+    qa = to_envi(quality[None], qa_image, hs_gimg.path + '_ss_qa', dtype=np.uint8, output_folder=output_folder)
+    output = to_envi(np.moveaxis(shifted, 2, 0), hs_gimg, hs_gimg.path + '_ss', output_folder=output_folder)
+    return output, qa

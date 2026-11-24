@@ -39,7 +39,7 @@ class GdalImage():
         Reads bands from the dataset.
         - If bands is None, loads the entire array.
         - If bands is an int, loads that specific band (1-based index).
-        - If bands is a list, loads the specified bands (1-based indices).
+        - If bands is a list/tuple, loads the specified zero-based bands.
         """
         if bands is None:
             array = self.ds.ReadAsArray()
@@ -62,7 +62,7 @@ class GdalImage():
         The selected bands are arranged in the last dimension of the array, matching the convention used in most non-geospatial libraries.
 
         Args:
-            bands (list): List of band indices (1-based) to include in the display image.
+            bands (list): Zero-based band indices to include in the display image.
 
         Returns:
             np.ndarray: uint8 image array with bands in the last dimension.
@@ -73,16 +73,16 @@ class GdalImage():
 
     @staticmethod
     def to_uint8(array: np.ndarray, band_last = False) -> np.ndarray:
-        array[array<0] = 0
-        array = np.nan_to_num(array, 0)
-        new_image = np.zeros_like(array)
+        array = np.nan_to_num(np.asarray(array, dtype=np.float32), nan=0, posinf=0, neginf=0)
+        array = np.maximum(array, 0)
+        new_image = np.zeros_like(array, dtype=np.uint8)
 
         nbands = array.shape[-1] if band_last else array.shape[0]
         for i in range(nbands):
             x = array[...,i] if band_last else array[i,...]
             min = np.nanpercentile(x, 2)
             max = np.nanpercentile(x, 98)
-            band = (x - min)*255 / (max - min)
+            band = np.clip((x - min)*255 / (max - min), 0, 255) if max > min else np.zeros_like(x)
             if band_last:
                 new_image[...,i] = band
             else:
@@ -151,10 +151,11 @@ class GdalImage():
             self.band_description.append(ds_band.GetDescription())
             # band nodata
             self.band_nodata.append(ds_band.GetNoDataValue())
-            # band statistics
-            stats = ds_band.GetStatistics(True, False)
-            if stats is None:
-                stats = (0, 0, 0, 0)
+            # Read existing statistics only. Querying/computing GDAL statistics
+            # can create PAM sidecars, changing an input after fingerprinting.
+            stats = [ds_band.GetMetadataItem('STATISTICS_' + key)
+                     for key in ('MINIMUM', 'MAXIMUM', 'MEAN', 'STDDEV')]
+            stats = [float(value) if value is not None else None for value in stats]
             self.band_stats.append({
                 "min": stats[0],
                 "max": stats[1],

@@ -1,0 +1,36 @@
+name: SPLASH smoke tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: splash
+          environment-file: environment.yml
+          channels: conda-forge
+          channel-priority: strict
+          auto-activate-base: false
+      - name: Install SPLASH
+        run: python -m pip install --no-deps -e .
+      - name: Verify dependencies and entry points
+        run: |
+          python -m pip check
+          geoharmony-splash --help
+          python -m geoharmony --help
+      - name: Run smoke tests
+        env:
+          MPLBACKEND: Agg
+        run: python -m unittest discover -s tests -v
+      - name: Exercise the complete synthetic workflow
+        env:
+          MPLBACKEND: Agg
+        run: geoharmony-splash demo --output-dir "$RUNNER_TEMP/splash-demo"

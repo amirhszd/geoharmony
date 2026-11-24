@@ -1,128 +1,93 @@
-import numpy as np
-import rasterio
-from scipy.ndimage import minimum_filter, median_filter
-import os
-from sklearn.cluster import MiniBatchKMeans
-from scipy.ndimage import binary_dilation
-from scipy.signal import medfilt2d
-import subprocess
-from geoharmony.utils.gdalimage import GdalImage
-from osgeo import gdal
+"""Optional DSM-derived ground masks on the exact MSI reference grid.
 
+Heights must be in metres. Missing DSM cells remain excluded from the mask.
+Filtering affects only the terrain/mask estimate, never sensor measurements.
+"""
+import copy
+import numpy as np
+from osgeo import gdal
+from scipy.ndimage import minimum_filter, median_filter, binary_dilation, distance_transform_edt
+from geoharmony.utils.gdalimage import GdalImage
 from geoharmony.utils.gdalwriter import to_envi
 
 
+def _single_metadata(image, description, nodata=None):
+    result = copy.copy(image)
+    result.bands = 1
+    result.band_description = [description]
+    result.band_nodata = [nodata]
+    return result
+
+
+def crop_image_to_extent_gimg(ref_gimg, target_gimg, out_path, out_type='GTiff', output_folder=None):
+    """Reproject a DSM to the exact reference grid, including across CRSs.
+
+    Output is ENVI regardless of the legacy ``out_type`` argument. Input height
+    units, if declared, must be metres; absent units follow the documented
+    metres requirement. NaN nodata prevents uncovered cells becoming ground.
+    """
+    if target_gimg.bands != 1:
+        raise ValueError('DSM must contain exactly one height band.')
+    band = target_gimg.ds.GetRasterBand(1)
+    unit = (band.GetUnitType() or '').strip().lower()
+    if unit and unit not in ('m', 'meter', 'meters', 'metre', 'metres'):
+        raise ValueError(f'DSM heights must be in metres; declared unit is {unit!r}. Convert before running SPLASH.')
+    values = band.ReadAsArray().astype(np.float32)
+    valid = np.isfinite(values) & (band.GetMaskBand().ReadAsArray() > 0)
+    nodata = band.GetNoDataValue()
+    if nodata is not None:
+        valid &= values != nodata
+    source = gdal.GetDriverByName('MEM').Create('', target_gimg.cols, target_gimg.rows, 1, gdal.GDT_Float32)
+    source.SetProjection(target_gimg.projection)
+    source.SetGeoTransform(target_gimg.geotransform)
+    source.GetRasterBand(1).WriteArray(np.where(valid, values, np.nan))
+    source.GetRasterBand(1).SetNoDataValue(float('nan'))
+    destination = gdal.GetDriverByName('MEM').Create('', ref_gimg.cols, ref_gimg.rows, 1, gdal.GDT_Float32)
+    destination.SetProjection(ref_gimg.projection)
+    destination.SetGeoTransform(ref_gimg.geotransform)
+    destination.GetRasterBand(1).Fill(float('nan'))
+    destination.GetRasterBand(1).SetNoDataValue(float('nan'))
+    gdal.ReprojectImage(source, destination, target_gimg.projection, ref_gimg.projection, gdal.GRA_Bilinear)
+    metadata = _single_metadata(target_gimg, 'DSM on MSI grid (metres)', float('nan'))
+    metadata.rows, metadata.cols = ref_gimg.rows, ref_gimg.cols
+    metadata.shape = (1, metadata.rows, metadata.cols)
+    for field in ('projection', 'geotransform', 'crs', 'x_res', 'y_res', 'xmin', 'ymin', 'xmax', 'ymax'):
+        setattr(metadata, field, getattr(ref_gimg, field))
+    return to_envi(destination.ReadAsArray()[None], metadata, out_path,
+                   dtype=np.float32, output_folder=output_folder)
+
+
 def get_dsm_gimg(dsm_crop_gimg, kernel_size=30, output_folder=None):
-    # Load DSM data
-
-    metadata = dsm_crop_gimg.ds
-    dsm_data = dsm_crop_gimg.read(1)
-    # with rasterio.open(dsm_crop_gimg.path) as dsm:
-    #     dsm_data = dsm.read(1)
-    #     profile = dsm.profile  # Save the profile for writing output files
-
-    # performing median filtering in the beginign to get rid of some the artifacts
-    filtered_dsm = medfilt2d(dsm_data, kernel_size=29)
-    filtered_dsm = minimum_filter(filtered_dsm, size=kernel_size, mode='reflect')
-    filtered_dsm = medfilt2d(filtered_dsm, kernel_size=5)
-
-    # Calculate the height map (HM = DSM - DTM)
-    height_map_arr = dsm_data - filtered_dsm
-    height_map_arr[height_map_arr < 0.5] = 0  # setting negative values and value smaller than 0.5 to zero
-    height_map_arr[height_map_arr > 5] = 5  # cap the height at 5 meters
-    height_map_arr = height_map_arr[None,]
-    # Update profile for saving outputs
-    # profile.update(dtype=rasterio.float32)
-
-    # Create output file names
-    base_name = os.path.splitext(os.path.basename(dsm_crop_gimg.path))[0]
-    hm_filename = os.path.join(os.path.dirname(dsm_crop_gimg.path),f"{base_name}_height.tif")
-    # # Write the Height Model (HM) to a new raster file
-    # with rasterio.open(hm_filename, 'w', **profile) as dst:
-    #     dst.write(height_map_arr.astype(np.float32), 1)
-    #
-
-    to_envi(height_map_arr.astype(np.float32), dsm_crop_gimg, hm_filename, dtype = np.float32, output_folder = output_folder)
-
-    return height_map_arr
-
-def generate_mask(height_map):
-    # ingesting hm_filename and running kmeans to get ground vs non ground points, k = 2
-    print("ok")
-    hm_reshaped = height_map.reshape(-1, 1)
-    kmeans = MiniBatchKMeans(n_clusters=2, random_state=0)
-    kmeans.fit(hm_reshaped)
-    labels = kmeans.labels_.reshape(height_map.shape)
-
-    # choose the second label as the non ground object since they are not the primary
-    nonground = labels == 1
-
-    # choosing the second label and dilating those points to create a bigger mask
-    dilated_labels = binary_dilation(nonground, structure=np.ones((10, 10))).astype(nonground.dtype)
-
-    return dilated_labels
-
-def crop_image_to_extent_gimg(ref_gimg, target_gimg, out_path, out_type = 'GTiff', output_folder = None):
-    """
-    Use GDAL to crop the smaller image based on the extent of the larger image.
-    """
-    # Build the GDAL command to crop the smaller image
-    # gdal_command = [
-    #     'gdalwarp',
-    #     '-te', str(ref_gimg.xmin), str(ref_gimg.ymin), str(ref_gimg.xmax), str(ref_gimg.ymax),
-    #     '-tr', str(ref_gimg.x_res), str(ref_gimg.y_res),
-    #     '-overwrite',
-    #     '-of', out_type,
-    #     target_gimg.path,
-    #     out_path
-    # ]
-    #
-    # # Run the GDAL command using subprocess
-    # subprocess.run(gdal_command, check=True)
-    #
-    out_path = os.path.join(output_folder, out_path)
-    warp_options = gdal.WarpOptions(
-        format=out_type,
-        outputBounds=(ref_gimg.xmin, ref_gimg.ymin, ref_gimg.xmax, ref_gimg.ymax),
-        xRes=ref_gimg.x_res,
-        yRes=abs(ref_gimg.y_res))
-
-    gdal.Warp(destNameOrDestDS=out_path, srcDSOrSrcDSTab=target_gimg.path, options=warp_options)
-
-    return GdalImage(out_path)
+    """Estimate above-ground height with spatial median/minimum filters."""
+    values = dsm_crop_gimg.read(1).astype(np.float32)
+    valid = np.isfinite(values)
+    nodata = dsm_crop_gimg.band_nodata[0]
+    if nodata is not None:
+        valid &= values != nodata
+    if not valid.any():
+        raise ValueError('DSM has no valid overlap with the MSI reference.')
+    # Extend only the auxiliary terrain estimate into missing cells to avoid
+    # zero-padding border bias. Original missing cells are excluded again below.
+    indices = distance_transform_edt(~valid, return_distances=False, return_indices=True)
+    filled = values[tuple(indices)]
+    terrain = median_filter(filled, size=29, mode='reflect')
+    terrain = minimum_filter(terrain, size=int(kernel_size), mode='reflect')
+    terrain = median_filter(terrain, size=5, mode='reflect')
+    height = np.clip(values - terrain, 0, 5)
+    height[height < .5] = 0
+    height[~valid] = np.nan
+    metadata = _single_metadata(dsm_crop_gimg, 'Estimated above-ground height (metres)', float('nan'))
+    to_envi(height[None], metadata, 'dsm_height', dtype=np.float32, output_folder=output_folder)
+    return height[None]
 
 
-
-def get_mask_gimg(mica_gimg, dsm_gimg, kernel_size=30, output_folder = None):
-
-    # first step is to make sure they are of the same size
-    dsm_cropped_path = os.path.basename(dsm_gimg.path).replace(".tif", "_cropped.tif")
-    dsm_crop_gimg = crop_image_to_extent_gimg(mica_gimg, dsm_gimg, dsm_cropped_path, output_folder = output_folder)
-
-    # get the height map
-    height_map_arr = get_dsm_gimg(dsm_crop_gimg, kernel_size=kernel_size, output_folder = output_folder)
-
-    # using the height map as it is for what we have
-    dilated_labels = height_map_arr
-    dilated_labels[dilated_labels > 0] = 1
-
-    # performing binary opening to get rid of small stuff then dilating to make the map bigger
-    dilated_labels = median_filter(dilated_labels, size=9)
-    dilated_labels = binary_dilation(dilated_labels, iterations = 5)
-
-    dilated_labels = 1 - dilated_labels # ground is 1, else is 0
-
-    mask_image_path = dsm_gimg.path.replace(".tif", "_mask.tif")
-
-    # # write out the labels file based on dsm file
-    # with rasterio.open(dsm_crop_gimg.path) as src:
-    #     profile = src.profile
-    #     profile.update(dtype=rasterio.uint8)  # Update dtype for the label output
-    #     del profile["nodata"]
-    #     # Save the labels raster
-    #     with rasterio.open(mask_image_path, 'w', **profile) as dst:
-    #         dst.write(dilated_labels.astype(np.uint8), 1)
-
-    out_gimage = to_envi(dilated_labels, dsm_crop_gimg, mask_image_path, dtype = np.uint8, output_folder = output_folder)
-
-    return out_gimage
+def get_mask_gimg(mica_gimg, dsm_gimg, kernel_size=30, output_folder=None):
+    """Return 1 for valid ground and 0 for elevated/missing DSM cells."""
+    cropped = crop_image_to_extent_gimg(mica_gimg, dsm_gimg, 'dsm_on_msi', output_folder=output_folder)
+    height = get_dsm_gimg(cropped, kernel_size=kernel_size, output_folder=output_folder)[0]
+    valid = np.isfinite(height)
+    elevated = median_filter((np.nan_to_num(height, nan=0) > 0).astype(np.uint8), size=9, mode='reflect') > 0
+    elevated = binary_dilation(elevated, iterations=5)
+    mask = (valid & ~elevated).astype(np.uint8)
+    metadata = _single_metadata(cropped, 'Ground mask (1 ground, 0 elevated or missing)', None)
+    return to_envi(mask[None], metadata, 'dsm_ground_mask', dtype=np.uint8, output_folder=output_folder)

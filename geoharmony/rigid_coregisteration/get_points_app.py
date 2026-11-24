@@ -2,8 +2,7 @@ import dash
 from dash import dcc, html, Input, Output, State
 import plotly.express as px
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import multiprocessing as mp
+from pathlib import Path
 import os
 import webbrowser
 import dash_bootstrap_components as dbc
@@ -38,11 +37,11 @@ def wait_then_open(port=8050, path=""):
     url = f"http://127.0.0.1:{port}/{path}"
     for _ in range(50):  # retry for ~5 seconds
         try:
-            r = requests.get(url)
+            r = requests.get(url, timeout=0.5)
             if r.status_code == 200:
                 webbrowser.open(url)
                 return
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.RequestException:
             pass
         time.sleep(0.1)
 
@@ -52,14 +51,14 @@ def wait_then_open(port=8050, path=""):
 def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_title="TARGET"):
     app = dash.Dash(
         __name__,
-        external_stylesheets=[dbc.themes.FLATLY]  # pick any of the 30+ themes
+        assets_folder=str(Path(__file__).with_name("assets"))
     )
     # =========================
     #      BASE FIGURE MAKER
     # =========================
     def make_base_fig(image):
         fig = px.imshow(image)
-        fig = go.FigureWidget(fig)
+        fig = go.Figure(fig)
         fig.update_layout(
             clickmode='event+select',
             dragmode='zoom',
@@ -80,7 +79,7 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
 
             # ---------- Header ----------
             dbc.Row([
-                dbc.Col(html.H2("Rigid Coregisteration", className="text-center fw-bold"))
+                dbc.Col(html.H2("Manual coregistration", className="text-center fw-bold"))
             ], className="mt-3"),
 
             dbc.Row([
@@ -224,14 +223,16 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
             point = clickData['points'][0]
             stored_points.append({'x': point['x'], 'y': point['y']})
         elif 'undo' in triggered_id:
-            stored_points.pop()
+            if stored_points:
+                stored_points.pop()
             if len(fig.data) > 1:
                 fig.data = [fig.data[i] for i in range(len(fig.data) -1)]  # remove the last trace
         elif 'clear' in triggered_id:
             stored_points = []
             fig.data = [fig.data[0]]
 
-        # if we added a point
+        fig.data = [fig.data[0]]
+        # Draw one point trace, preserving the base image.
         if stored_points:
             fig.add_trace(
                 go.Scatter(
@@ -317,33 +318,15 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
 # =========================
 #      RUN DASH APP
 # =========================
-def run_get_points_app(image1, image2, name, results_queue):
+def run_get_points_app(image1, image2, name, results_queue, port=8050, open_browser=True):
     ref_title = "Micasense"
     if name == "vnir":
         tgt_title = "VNIR"
     elif name == "swir":
         tgt_title = "SWIR"
+    else:
+        tgt_title = name.upper() or "TARGET"
     app = make_dash_app(image1, image2, results_queue, ref_title, tgt_title)
-    threading.Thread(target=lambda: wait_then_open(8050), daemon=True).start()
-    app.run(debug=False)
-
-
-if __name__ == "__main__":
-    # load your images
-    image1 = plt.imread("/Users/amirhassanzadeh/Downloads/madonna.png")
-    image2 = plt.imread("/Users/amirhassanzadeh/Downloads/madonna.png")
-
-    # launch GUI
-    q, dash_proc = mp.Manager().Queue(), mp.Process(
-        target=run_get_points_app,
-        args=(image1, image2, q, "REFERENCE", "TARGET"),
-        daemon=True
-    )
-    dash_proc.start()
-
-    # block until user clicks Submit
-    ref_pts, tgt_pts = q.get()
-    print("Reference points:", ref_pts)
-    print("Target points:", tgt_pts)
-
-    dash_proc.join()
+    if open_browser:
+        threading.Thread(target=lambda: wait_then_open(port), daemon=True).start()
+    app.run(debug=False, host="127.0.0.1", port=port, use_reloader=False)

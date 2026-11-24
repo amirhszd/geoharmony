@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoharmony-splash"
+version = "0.1.0"
+description = "SPLASH spatial registration for VNIR, SWIR, and multispectral imagery"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "GDAL==3.10.3",
+    "rasterio==1.4.3",
+    "numpy==2.0.1",
+    "scipy==1.15.3",
+    "scikit-learn==1.7.0",
+    "scikit-image==0.25.2",
+    "joblib==1.5.1",
+    "tqdm==4.67.1",
+    "antspyx==0.5.4",
+    "opencv-python-headless==4.11.0.86",
+    "dash==3.0.4",
+    "dash-bootstrap-components==2.0.3",
+    "plotly==6.1.2",
+    "Flask==3.0.3",
+    "requests==2.32.4",
+]
+
+[project.scripts]
+geoharmony-splash = "geoharmony.splash.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "geoharmony",
+    "geoharmony.splash",
+    "geoharmony.splash.scripts",
+    "geoharmony.rigid_coregisteration",
+    "geoharmony.utils",
+]
+namespaces = false
+
+[tool.setuptools.package-data]
+"geoharmony.rigid_coregisteration" = ["assets/*.css", "assets/*.png"]

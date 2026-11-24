@@ -5,131 +5,108 @@ from tqdm import tqdm
 from osgeo import gdal, osr, gdal_array
 from geoharmony.utils.gdalimage import GdalImage
 import os
-import subprocess
 def remove_envi_file(path):
     """
     Remove an ENVI file and its associated header file.
     """
-    header_path = path + ".hdr"
-    xml = path + ".aux.xml"
-    if os.path.exists(path):
-        os.remove(path)
-        if os.path.exists(header_path):
-            os.remove(header_path)
-        if os.path.exists(xml):
-            os.remove(xml)
+    for filename in (path, path + ".hdr", path + ".aux.xml"):
+        if filename.startswith('/vsimem/'):
+            if gdal.VSIStatL(filename) is not None:
+                gdal.Unlink(filename)
+        elif os.path.isfile(filename):
+            os.remove(filename)
 
 
-def to_envi_scale(gdalimage, path, coefficients, dtype = None, drop_last_band = True, output_folder = None):
+def _output_path(path, output_folder):
+    return os.path.join(output_folder, os.path.basename(path)) if output_folder is not None else path
+
+
+def _output_type(dtype, image):
+    if dtype is None:
+        return image.dtype_classes['gdal']
+    code = gdal_array.NumericTypeCodeToGDALTypeCode(np.dtype(dtype))
+    if code is None or code == gdal.GDT_Unknown:
+        raise TypeError(f'Unsupported output dtype: {dtype}')
+    return code
+
+
+def _write_metadata(dataset, image, count, coefficients=None):
+    dataset.SetGeoTransform(image.geotransform)
+    dataset.SetProjection(image.projection)
+    # Keep wavelength metadata, trimming the auxiliary row entry if present.
+    metadata = (image.ds.GetMetadata('ENVI') or {}) if image.bands == image.ds.RasterCount else {}
+    for key in ('wavelength', 'fwhm', 'bbl'):
+        value = metadata.get(key)
+        if value:
+            values = value.strip('{} ').split(',')
+            if len(values) >= count:
+                dataset.SetMetadataItem(key, '{' + ','.join(values[:count]) + '}', 'ENVI')
+            elif len(values) == count - 1:
+                # Row-augmented ENVI inputs commonly list wavelengths for
+                # spectral bands only. Keep that list through intermediate stages.
+                dataset.SetMetadataItem(key, '{' + ','.join(values) + '}', 'ENVI')
+    for key in ('wavelength_units', 'wavelength units'):
+        if key in metadata:
+            dataset.SetMetadataItem(key, metadata[key], 'ENVI')
+    for index in range(count):
+        band = dataset.GetRasterBand(index + 1)
+        if index < len(image.band_description):
+            band.SetDescription(image.band_description[index])
+        if index < len(image.band_nodata) and image.band_nodata[index] is not None:
+            nodata = image.band_nodata[index]
+            if coefficients is not None:
+                nodata = nodata * coefficients[index]
+            band.SetNoDataValue(float(nodata))
+
+
+def to_envi_scale(gdalimage, path, coefficients=None, dtype=None, drop_last_band=True, output_folder=None):
+    """Export spectral bands without mutating the source metadata.
+
+    ``coefficients`` multiply stored values back into their original units;
+    ``None`` is the identity. The auxiliary acquisition-row band is dropped once.
     """
-    Write an array to an ENVI file using GDAL.
+    count = gdalimage.bands - int(drop_last_band)
+    if count < 1:
+        raise ValueError('At least one spectral band is required.')
+    scales = np.ones(count, dtype=np.float64) if coefficients is None else np.asarray(coefficients, dtype=np.float64)
+    if scales.ndim != 1 or len(scales) not in (count, gdalimage.bands) or not np.isfinite(scales).all():
+        raise ValueError('Restoration coefficients must contain one finite value per output/source band.')
+    scales = scales[:count]
+    code = _output_type(dtype, gdalimage)
+    destination = _output_path(path, output_folder)
+    if destination == gdalimage.path:
+        raise ValueError('Final export must use a different path from its source.')
+    remove_envi_file(destination)
+    dataset = gdal.GetDriverByName('ENVI').Create(destination, gdalimage.cols, gdalimage.rows, count, code)
+    if dataset is None:
+        raise RuntimeError(f'Could not create output: {destination}')
+    _write_metadata(dataset, gdalimage, count, scales)
+    for index in range(count):
+        values = gdalimage.ds.GetRasterBand(index + 1).ReadAsArray()
+        dataset.GetRasterBand(index + 1).WriteArray(values.astype(np.float64) * scales[index])
+    dataset.FlushCache()
+    dataset = None
+    return GdalImage(destination)
 
-    the default dtype is set to the gdalimage dtype. pass numpy dtype to change it.
 
-    dtype in [
-        np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64,
-        np.float32, np.float64, np.complex64, np.complex128
-    ]
-
-    """
-
-    if dtype in [
-        np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64,
-        np.float32, np.float64, np.complex64, np.complex128]:
-        dtype_gdal = gdal_array.NumericTypeCodeToGDALTypeCode(dtype)
-    elif dtype is None:
-        dtype = gdalimage.dtype_classes['gdal']
-    else:
-        raise TypeError(f"dtype must be None or one of the numpy datatypes, got {dtype}")
-
-
-    path = os.path.join(output_folder, os.path.basename(path))
-
-    # if file already exists, remove it
-    remove_envi_file(path)
-
-    array = gdalimage.read()
-    # drop the last band from description if it already exists
-    if drop_last_band:
-        if hasattr(gdalimage, "band_description") and gdalimage.band_description:
-            gdalimage.band_description = gdalimage.band_description[:-1]
-        if hasattr(gdalimage, "band_nodata") and gdalimage.band_nodata:
-            gdalimage.band_nodata = gdalimage.band_nodata[:-1]
-        if hasattr(gdalimage, "band_wavelengths") and gdalimage.band_wavelengths:
-            gdalimage.band_wavelengths = gdalimage.band_wavelengths[:-1]
-        gdalimage.bands -= 1
-
-    scaled_data = np.zeros((gdalimage.bands - 1 if drop_last_band else gdalimage.bands,
-                            gdalimage.rows,
-                            gdalimage.cols), dtype = dtype)
-    for coefficient, band_n in zip(coefficients, range(gdalimage.bands - 1 if drop_last_band else gdalimage.bands)):
-        scaled_data[band_n] = (array[band_n]*coefficient).squeeze()
-
-    with gdal.GetDriverByName('ENVI').Create(path, gdalimage.cols, gdalimage.rows, gdalimage.bands, dtype_gdal) as out_ds:
-        out_ds.SetGeoTransform(gdalimage.geotransform)
-        out_ds.SetProjection(gdalimage.projection)
-
-        desc = f"Processing {path} [1/1] : "
-        with tqdm(total=gdalimage.bands, desc=desc, bar_format="{desc}{percentage:3.0f}% - done.", ncols=120,
-                  position=0, leave=True) as pbar:
-            for band in range(1, gdalimage.bands + 1 if not drop_last_band else gdalimage.bands):
-                out_ds.GetRasterBand(band).WriteArray(array[band - 1])
-                out_ds.GetRasterBand(band).SetDescription(gdalimage.band_description[band - 1])
-                if len(gdalimage.band_nodata) >= 1:
-                    if gdalimage.band_nodata[band - 1] is not None:
-                        out_ds.GetRasterBand(band).SetNoDataValue(gdalimage.band_nodata[band - 1])
-                pbar.update(1)
-
-        out_ds.FlushCache()
-
-    print(f"ENVI file saved to: {path}")
-
-def to_envi(array, gdalimage, path, dtype = None, output_folder = None):
-    """
-    Write an array to an ENVI file using GDAL.
-
-    the default dtype is set to the gdalimage dtype. pass numpy dtype to change it.
-
-    dtype in [
-        np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64,
-        np.float32, np.float64, np.complex64, np.complex128
-    ]
-
-    """
-
-    if dtype in [
-        np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64,
-        np.float32, np.float64, np.complex64, np.complex128]:
-        dtype = gdal_array.NumericTypeCodeToGDALTypeCode(dtype)
-    elif dtype is None:
-        dtype = gdalimage.dtype_classes['gdal']
-    else:
-        raise TypeError(f"dtype must be None or one of the numpy datatypes, got {dtype}")
-
-    path = os.path.join(output_folder, os.path.basename(path))
-
-    # if file already exists, remove it
-    remove_envi_file(path)
-
-    if array.shape[1] != gdalimage.rows or array.shape[2] != gdalimage.cols or array.shape[0] != gdalimage.bands:
-        raise ValueError("Array shape does not match metadata: "
-                         f"array shape {array.shape}, "
-                         f"expected (bands={gdalimage.bands}, rows={gdalimage.rows}, cols={gdalimage.cols})")
-
-    with gdal.GetDriverByName('ENVI').Create(path, gdalimage.cols, gdalimage.rows, gdalimage.bands, dtype) as out_ds:
-        out_ds.SetGeoTransform(gdalimage.geotransform)
-        out_ds.SetProjection(gdalimage.projection)
-
-        for band in range(1, gdalimage.bands + 1):
-            out_ds.GetRasterBand(band).WriteArray(array[band - 1])
-            out_ds.GetRasterBand(band).SetDescription(gdalimage.band_description[band - 1])
-            if len(gdalimage.band_nodata) >= 1:
-                if gdalimage.band_nodata[band - 1] is not None:
-                    out_ds.GetRasterBand(band).SetNoDataValue(gdalimage.band_nodata[band - 1])
-
-        out_ds.FlushCache()
-
-    return GdalImage(path)
+def to_envi(array, gdalimage, path, dtype=None, output_folder=None):
+    """Write a band-first array with the source grid and spectral metadata."""
+    array = np.asarray(array)
+    expected = (gdalimage.bands, gdalimage.rows, gdalimage.cols)
+    if array.shape != expected:
+        raise ValueError(f'Array shape {array.shape} does not match metadata {expected}.')
+    code = _output_type(dtype, gdalimage)
+    destination = _output_path(path, output_folder)
+    remove_envi_file(destination)
+    dataset = gdal.GetDriverByName('ENVI').Create(destination, gdalimage.cols, gdalimage.rows, gdalimage.bands, code)
+    if dataset is None:
+        raise RuntimeError(f'Could not create output: {destination}')
+    _write_metadata(dataset, gdalimage, gdalimage.bands)
+    for index in range(gdalimage.bands):
+        dataset.GetRasterBand(index + 1).WriteArray(array[index])
+    dataset.FlushCache()
+    dataset = None
+    return GdalImage(destination)
 
 
 def remove_bands_from_metadata(gdalimage, bands_to_remove):
@@ -208,7 +185,7 @@ def save_crop_warp(target_gdalImage, ref_gdalImage, homography_matrix, outfolder
 
     return out_gdalimage
 
-def set_zeros_base_ref(ref_gimg, target_gimg, dtype = np.uint16, output_folder = None):
+def set_zeros_base_ref(ref_gimg, target_gimg, dtype=None, output_folder=None):
 
     # Check if the two arrays are the same size
     if ref_gimg.shape[1:] != target_gimg.shape[1:]:
@@ -221,7 +198,9 @@ def set_zeros_base_ref(ref_gimg, target_gimg, dtype = np.uint16, output_folder =
 
     # Find indices where values are zero and setting it to zero
     try:
-        zero_indices = np.nanmean(ref_arr,0) == 0
+        # The final acquisition-row plane defines HS support. Individual
+        # zero-valued spectral measurements inside that footprint stay valid.
+        zero_indices = ~np.isfinite(ref_arr[-1]) | (ref_arr[-1] == 0)
         target_arr[:, zero_indices] = 0
         out_gimage = to_envi(target_arr, target_gimg, target_gimg.path, dtype, output_folder=output_folder)
     except Exception as e:
@@ -230,82 +209,66 @@ def set_zeros_base_ref(ref_gimg, target_gimg, dtype = np.uint16, output_folder =
     return out_gimage
 
 
-def warp_extent_res(gdalimage_input: GdalImage,
-                    gdalimage_target: GdalImage,
-                    extension_string: str,
-                    resampling_algorithm: str = "near",
-                    output_folder = None) -> str:
-    """
-    Applies the extent and resolution of the target image to the input image.
-
-    Args:
-        gdalimage_input (GdalImage): The input image to be warped.
-        gdalimage_target (GdalImage): The target image whose extent and resolution will be used.
-        extension_string (str): Suffix or extension for the output file.
-        resampling_algorithm (str): Resampling algorithm to use. Must be one of:
-            "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
-            "max", "min", "med", "q1", "q3", "sum". Default is "near".
-
-    Returns:
-        str: Path to the output file with updated extent and resolution.
-    """
-
-    if resampling_algorithm not in [
-        "near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
-        "max", "min", "med", "q1", "q3", "sum"
-    ]:
-        raise ValueError(
-            "resampling_algorithm must be one of: 'near', 'bilinear', 'cubic', 'cubicspline', 'lanczos', "
-            "'average', 'rms', 'mode', 'max', 'min', 'med', 'q1', 'q3', 'sum'"
-        )
-
-    format = "GTiff" if gdalimage_input.path.endswith("tif") else "ENVI"
-
-    if format == "ENVI":
-        output_filename = os.path.join(output_folder, os.path.basename(gdalimage_input.path) + f'_{extension_string}')
-    else:
-        output_filename = os.path.join(output_folder, os.path.basename(gdalimage_input.path).split('.')[0] + f'_{extension_string}')
-
-    # remoev if file already exists
+def warp_extent_res(gdalimage_input: GdalImage, gdalimage_target: GdalImage,
+                    extension_string: str, resampling_algorithm: str = "near",
+                    output_folder=None, categorical_last_band=False) -> GdalImage:
+    """Reproject onto the exact target grid, with optional categorical row IDs."""
+    algorithms = {'near': gdal.GRA_NearestNeighbour, 'bilinear': gdal.GRA_Bilinear,
+                  'cubic': gdal.GRA_Cubic, 'cubicspline': gdal.GRA_CubicSpline,
+                  'lanczos': gdal.GRA_Lanczos, 'average': gdal.GRA_Average,
+                  'mode': gdal.GRA_Mode, 'max': gdal.GRA_Max, 'min': gdal.GRA_Min,
+                  'med': gdal.GRA_Med, 'q1': gdal.GRA_Q1, 'q3': gdal.GRA_Q3,
+                  'sum': gdal.GRA_Sum, 'rms': gdal.GRA_RMS}
+    if resampling_algorithm not in algorithms:
+        raise ValueError(f'Unsupported resampling algorithm: {resampling_algorithm}')
+    basename = os.path.basename(gdalimage_input.path)
+    if basename.lower().endswith(('.tif', '.tiff')):
+        basename = os.path.splitext(basename)[0]
+    output_filename = _output_path(basename + '_' + extension_string, output_folder)
+    if output_filename == gdalimage_input.path:
+        raise ValueError('Reprojection output must differ from input.')
     remove_envi_file(output_filename)
-
-    gdalimage_input_crs = gdalimage_input.crs
-    gdalimage_target_crs = gdalimage_target.crs
-
-    xmin, ymin, xmax, ymax = gdalimage_target.xmin, gdalimage_target.ymin, gdalimage_target.xmax, gdalimage_target.ymax
-    x_res_target, y_res_target = gdalimage_target.x_res, gdalimage_target.y_res
-
-    # subprocess.run([
-    #     "gdalwarp",
-    #     "-of", "ENVI",
-    #     "-te", str(xmin), str(ymin), str(xmax), str(ymax),
-    #     "-te_srs", gdalimage_target_crs,
-    #     "-tr", str(x_res_target), str(abs(y_res_target)),
-    #     "-t_srs", gdalimage_target_crs,
-    #     "-s_srs", gdalimage_input_crs,
-    #     "-r", resampling_algorithm,
-    #     gdalimage_input.path,
-    #     output_filename,
-    #     "-overwrite"
-    # ], check=True)
-    #
-    # print(f"{gdalimage_input.path} warped to {gdalimage_target_crs}: {output_filename}")
-
-    warp_options = gdal.WarpOptions(
-        format="ENVI",
-        outputBounds=(xmin, ymin, xmax, ymax),
-        outputBoundsSRS=gdalimage_target_crs,
-        xRes=x_res_target,
-        yRes=abs(y_res_target),
-        dstSRS=gdalimage_target_crs,
-        srcSRS=gdalimage_input_crs,
-        resampleAlg=resampling_algorithm,
-        creationOptions=["STATISTICS=NO"]
-    )
-
-    gdal.Warp(destNameOrDestDS=output_filename, srcDSOrSrcDSTab=gdalimage_input.path, options=warp_options)
-
-    print(f"{gdalimage_input.path} warped to {gdalimage_target_crs}: {output_filename}")
-
+    destination = gdal.GetDriverByName('ENVI').Create(output_filename, gdalimage_target.cols,
+        gdalimage_target.rows, gdalimage_input.bands,
+        gdal.GDT_Float32 if categorical_last_band else gdalimage_input.dtype_classes['gdal'])
+    if destination is None:
+        raise RuntimeError(f'Could not create reprojected output: {output_filename}')
+    _write_metadata(destination, gdalimage_input, gdalimage_input.bands)
+    destination.SetGeoTransform(gdalimage_target.geotransform)
+    destination.SetProjection(gdalimage_target.projection)
+    if not categorical_last_band:
+        code = gdal.ReprojectImage(gdalimage_input.ds, destination, gdalimage_input.projection,
+                                  gdalimage_target.projection, algorithms[resampling_algorithm])
+        if code != gdal.CE_None:
+            raise RuntimeError(f'Reprojection failed: {gdalimage_input.path}')
+    else:
+        source_rows = gdal.Translate('', gdalimage_input.ds, format='MEM', bandList=[gdalimage_input.bands])
+        target_rows = gdal.GetDriverByName('MEM').Create('', destination.RasterXSize, destination.RasterYSize, 1, gdal.GDT_Float32)
+        target_rows.SetGeoTransform(destination.GetGeoTransform())
+        target_rows.SetProjection(destination.GetProjection())
+        gdal.ReprojectImage(source_rows, target_rows, source_rows.GetProjection(), target_rows.GetProjection(), gdal.GRA_NearestNeighbour)
+        rows = target_rows.ReadAsArray()
+        source_support = source_rows.ReadAsArray() > 0
+        destination.GetRasterBand(gdalimage_input.bands).WriteArray(rows)
+        for index in range(gdalimage_input.bands - 1):
+            # NaN nodata excludes only absent support (and declared nonzero
+            # sentinels), so bilinear interpolation preserves measured zeros.
+            source_band = gdal.Translate('', gdalimage_input.ds, format='MEM', bandList=[index + 1], outputType=gdal.GDT_Float32)
+            values = source_band.ReadAsArray()
+            valid = source_support & np.isfinite(values)
+            nodata = gdalimage_input.band_nodata[index]
+            if nodata is not None and nodata != 0:
+                valid &= values != nodata
+            source_band.GetRasterBand(1).WriteArray(np.where(valid, values, np.nan))
+            source_band.GetRasterBand(1).SetNoDataValue(float('nan'))
+            target_band = gdal.GetDriverByName('MEM').Create('', destination.RasterXSize, destination.RasterYSize, 1, gdal.GDT_Float32)
+            target_band.SetGeoTransform(destination.GetGeoTransform())
+            target_band.SetProjection(destination.GetProjection())
+            target_band.GetRasterBand(1).SetNoDataValue(float('nan'))
+            target_band.GetRasterBand(1).Fill(float('nan'))
+            gdal.ReprojectImage(source_band, target_band, source_band.GetProjection(), target_band.GetProjection(), algorithms[resampling_algorithm])
+            destination.GetRasterBand(index + 1).WriteArray(np.where(rows > 0, target_band.ReadAsArray(), 0))
+            destination.GetRasterBand(index + 1).DeleteNoDataValue()
+    destination.FlushCache()
+    destination = None
     return GdalImage(output_filename)
-

@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, cite the version or commit used for your processing."
+type: software
+title: "GeoHarmony: SPLASH spatial harmonization"
+version: 0.1.0
+authors:
+  - family-names: Hassanzadeh
+    given-names: Amirhossein
+repository-code: "https://github.com/amirhszd/geoharmony"
+license: MIT

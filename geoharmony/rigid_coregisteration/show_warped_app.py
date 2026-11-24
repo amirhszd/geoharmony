@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 import numpy as np
+from pathlib import Path
 import webbrowser, threading, time, requests, os
 
 # ---------- Helper ----------
@@ -11,10 +12,10 @@ def wait_then_open(port=8050, path=""):
     url = f"http://127.0.0.1:{port}/{path}"
     for _ in range(60):
         try:
-            if requests.get(url).status_code == 200:
+            if requests.get(url, timeout=0.5).status_code == 200:
                 webbrowser.open(url)
                 return
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.RequestException:
             pass
         time.sleep(0.1)
 
@@ -40,7 +41,7 @@ def to_uint8(arr):
 
 # ---------- Core app ----------
 def make_blend_app(ref_arr, tgt_arr, results_queue):
-    app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
+    app = dash.Dash(__name__, assets_folder=str(Path(__file__).with_name("assets")))
 
     def make_composite(alpha):
         ref = to_uint8(ref_arr)  # ← ensure uint8
@@ -51,7 +52,7 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
 
     # initial figure (α = 0.5)
     fig = px.imshow(make_composite(0.5))
-    fig = go.FigureWidget(fig)
+    fig = go.Figure(fig)
     fig.update_layout(
         autosize=True, dragmode="zoom",
         margin=dict(l=60, r=60, t=20, b=60),
@@ -60,7 +61,7 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
 
     # ---------- Layout ----------
     app.layout = dbc.Container(fluid=True, children=[
-        dbc.Row(dbc.Col(html.H2("Rigid Coregisteration", className="text-center fw-bold"), className="mt-3")),
+        dbc.Row(dbc.Col(html.H2("Manual coregistration preview", className="text-center fw-bold"), className="mt-3")),
         dbc.Row(dbc.Col(html.H5("Adjust the slider to blend reference and warped target images and check the quality.",
                                 className="text-center text-muted mb-3"))),
 
@@ -130,7 +131,8 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
     return app
 
 # ---------- Runner ----------
-def run_show_warped_app(ref_arr, tgt_arr, results_queue):
+def run_show_warped_app(ref_arr, tgt_arr, results_queue, port=8050, open_browser=True):
     app = make_blend_app(ref_arr, tgt_arr, results_queue)
-    threading.Thread(target=lambda: wait_then_open(8050), daemon=True).start()
-    app.run(debug=False)
+    if open_browser:
+        threading.Thread(target=lambda: wait_then_open(port), daemon=True).start()
+    app.run(debug=False, host="127.0.0.1", port=port, use_reloader=False)
