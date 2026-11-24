@@ -10,8 +10,6 @@ reference image. It combines three processing stages:
 
 [![SPLASH workflow overview](docs/images/splash_highlevel.png)](docs/images/splash_highlevel.pdf)
 
-[Download the workflow overview (PDF)](docs/images/splash_highlevel.pdf).
-
 This repository provides a workflow for processing your own data, with a local
 browser interface, a JSON configuration interface, and a generated synthetic
 example. The synthetic example checks that the software runs; it is not an
