@@ -1,11 +1,17 @@
+import os
+import threading
+import time
+import webbrowser
+from pathlib import Path
+
 import dash
-from dash import dcc, html, Input, Output, State
-import plotly.express as px
-import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 import numpy as np
-from pathlib import Path
-import webbrowser, threading, time, requests, os
+import plotly.express as px
+import plotly.graph_objects as go
+import requests
+from dash import Input, Output, dcc, html
+
 
 # ---------- Helper ----------
 def wait_then_open(port=8050, path=""):
@@ -39,6 +45,7 @@ def to_uint8(arr):
 
     return np.clip(arr_f, 0, 255).astype(np.uint8)
 
+
 # ---------- Core app ----------
 def make_blend_app(ref_arr, tgt_arr, results_queue):
     app = dash.Dash(__name__, assets_folder=str(Path(__file__).with_name("assets")))
@@ -54,54 +61,102 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
     fig = px.imshow(make_composite(0.5))
     fig = go.Figure(fig)
     fig.update_layout(
-        autosize=True, dragmode="zoom",
+        autosize=True,
+        dragmode="zoom",
         margin=dict(l=60, r=60, t=20, b=60),
-        uirevision="fixed"
+        uirevision="fixed",
     )
 
     # ---------- Layout ----------
-    app.layout = dbc.Container(fluid=True, children=[
-        dbc.Row(dbc.Col(html.H2("Manual coregistration preview", className="text-center fw-bold"), className="mt-3")),
-        dbc.Row(dbc.Col(html.H5("Adjust the slider to blend reference and warped target images and check the quality.",
-                                className="text-center text-muted mb-3"))),
-
-        # Image
-        dbc.Row(dbc.Col(
-            dbc.Card(dcc.Graph(id="img", figure=fig, config={"responsive": True, "scrollZoom": True},
-                               style={"height": "70vh"}), className="shadow")
-        )),
-
-        # Alpha slider
-        dbc.Row(dbc.Col(
-            dcc.Slider(id='alpha-slider', min=0, max=1, step=0.1, value=0.5,
-                       tooltip={"placement": "bottom", "always_visible": True}),
-            className="my-3 px-5"
-        )),
-
-        # Buttons
-        dbc.Row(dbc.Col([
-            dbc.Button("Redo", id="redo-btn", color="danger", className="me-2 px-5"),
-            dbc.Button("Done", id="done-btn", color="success", className="px-5")
-        ], className="text-center my-3")),
-
-        # Feedback
-        dbc.Row(dbc.Col(dbc.Alert(id="msg", is_open=False, color="info",
-                                  className="text-center fw-bold")))
-    ])
+    app.layout = dbc.Container(
+        fluid=True,
+        children=[
+            dbc.Row(
+                dbc.Col(
+                    html.H2(
+                        "Manual coregistration preview", className="text-center fw-bold"
+                    ),
+                    className="mt-3",
+                )
+            ),
+            dbc.Row(
+                dbc.Col(
+                    html.H5(
+                        "Adjust the slider to blend reference and warped target images and check the quality.",
+                        className="text-center text-muted mb-3",
+                    )
+                )
+            ),
+            # Image
+            dbc.Row(
+                dbc.Col(
+                    dbc.Card(
+                        dcc.Graph(
+                            id="img",
+                            figure=fig,
+                            config={"responsive": True, "scrollZoom": True},
+                            style={"height": "70vh"},
+                        ),
+                        className="shadow",
+                    )
+                )
+            ),
+            # Alpha slider
+            dbc.Row(
+                dbc.Col(
+                    dcc.Slider(
+                        id="alpha-slider",
+                        min=0,
+                        max=1,
+                        step=0.1,
+                        value=0.5,
+                        tooltip={"placement": "bottom", "always_visible": True},
+                    ),
+                    className="my-3 px-5",
+                )
+            ),
+            # Buttons
+            dbc.Row(
+                dbc.Col(
+                    [
+                        dbc.Button(
+                            "Redo", id="redo-btn", color="danger", className="me-2 px-5"
+                        ),
+                        dbc.Button(
+                            "Done", id="done-btn", color="success", className="px-5"
+                        ),
+                    ],
+                    className="text-center my-3",
+                )
+            ),
+            # Feedback
+            dbc.Row(
+                dbc.Col(
+                    dbc.Alert(
+                        id="msg",
+                        is_open=False,
+                        color="info",
+                        className="text-center fw-bold",
+                    )
+                )
+            ),
+        ],
+    )
 
     # ---------- Callbacks ----------
     @app.callback(
         Output("img", "figure"),
         Input("alpha-slider", "value"),
-        prevent_initial_call=True
+        prevent_initial_call=True,
     )
     def update_blend(alpha):
         comp = make_composite(alpha)
         new_fig = px.imshow(comp)
         new_fig.update_layout(
-            autosize=True, dragmode="zoom",
+            autosize=True,
+            dragmode="zoom",
             margin=dict(l=60, r=60, t=20, b=60),
-            uirevision="fixed"
+            uirevision="fixed",
         )
         return new_fig
 
@@ -110,10 +165,11 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
         Output("msg", "is_open"),
         Input("done-btn", "n_clicks"),
         Input("redo-btn", "n_clicks"),
-        prevent_initial_call=True
+        prevent_initial_call=True,
     )
     def handle_buttons(done, redo):
         trig = dash.callback_context.triggered_id
+
         def delayed_exit(flag):
             time.sleep(1.5)
             os._exit(0)
@@ -129,6 +185,7 @@ def make_blend_app(ref_arr, tgt_arr, results_queue):
         raise dash.exceptions.PreventUpdate
 
     return app
+
 
 # ---------- Runner ----------
 def run_show_warped_app(ref_arr, tgt_arr, results_queue, port=8050, open_browser=True):

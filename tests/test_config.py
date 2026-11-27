@@ -1,9 +1,9 @@
 """Public configuration and raster-validation contracts on tiny generated data."""
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 from osgeo import gdal, osr
@@ -24,11 +24,25 @@ class SplashConfigTests(unittest.TestCase):
         self._raster(self.inputs / "swir.tif", row_band=True)
         self._raster(self.inputs / "msi.tif", row_band=False)
 
-    def _raster(self, path, *, row_band, bands=3, rows=16, columns=18,
-                with_crs=True, row_values=None, transform=None):
+    def _raster(
+        self,
+        path,
+        *,
+        row_band,
+        bands=3,
+        rows=16,
+        columns=18,
+        with_crs=True,
+        row_values=None,
+        transform=None,
+    ):
         count = bands + int(row_band)
         raster = gdal.GetDriverByName("GTiff").Create(
-            str(path), columns, rows, count, gdal.GDT_Float32,
+            str(path),
+            columns,
+            rows,
+            count,
+            gdal.GDT_Float32,
         )
         raster.SetGeoTransform(transform or (100, 1, 0, 200, 0, -1))
         if with_crs:
@@ -41,8 +55,13 @@ class SplashConfigTests(unittest.TestCase):
                 ((index + 1) * (xx + yy + 1)).astype(np.float32),
             )
         if row_band:
-            values = row_values if row_values is not None else np.broadcast_to(
-                np.arange(1, rows + 1, dtype=np.float32)[:, None], (rows, columns),
+            values = (
+                row_values
+                if row_values is not None
+                else np.broadcast_to(
+                    np.arange(1, rows + 1, dtype=np.float32)[:, None],
+                    (rows, columns),
+                )
             )
             band = raster.GetRasterBand(count)
             band.WriteArray(np.ascontiguousarray(values))
@@ -90,15 +109,21 @@ class SplashConfigTests(unittest.TestCase):
 
     def test_inclusive_ranges_accept_last_spectral_band(self):
         config = self._config(
-            ss_vnir_band_range=[2, 2], ss_swir_band_range=[0, 2],
-            ereg_vnir_band_range=[0, 2], ereg_swir_band_range=[2, 2],
+            ss_vnir_band_range=[2, 2],
+            ss_swir_band_range=[0, 2],
+            ereg_vnir_band_range=[0, 2],
+            ereg_swir_band_range=[2, 2],
         )
         config.validate_inputs()
         self.assertEqual(config.ss_vnir_band_range, [2, 2])
 
     def test_row_band_cannot_be_selected_as_spectral_input(self):
-        for key in ("ss_vnir_band_range", "ss_swir_band_range",
-                    "ereg_vnir_band_range", "ereg_swir_band_range"):
+        for key in (
+            "ss_vnir_band_range",
+            "ss_swir_band_range",
+            "ereg_vnir_band_range",
+            "ereg_swir_band_range",
+        ):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(ValueError, key):
                     self._config(**{key: [0, 3]}).validate_inputs()
@@ -108,17 +133,23 @@ class SplashConfigTests(unittest.TestCase):
                     self._config(**{key: [0, 1, 3]}).validate_inputs()
 
     def test_invalid_row_ids_are_rejected(self):
-        original = np.broadcast_to(np.arange(1, 17, dtype=np.float32)[:, None], (16, 18)).copy()
+        original = np.broadcast_to(
+            np.arange(1, 17, dtype=np.float32)[:, None], (16, 18)
+        ).copy()
         for bad_value in (0.25, -1, float("nan"), float("inf")):
             with self.subTest(bad_value=bad_value):
                 rows = original.copy()
                 rows[4, 4] = bad_value
-                self._raster(self.inputs / "bad_rows.tif", row_band=True, row_values=rows)
+                self._raster(
+                    self.inputs / "bad_rows.tif", row_band=True, row_values=rows
+                )
                 with self.assertRaisesRegex(ValueError, "acquisition-row"):
                     self._config(vnir_path="inputs/bad_rows.tif").validate_inputs()
 
     def test_background_zero_ids_are_valid(self):
-        rows = np.broadcast_to(np.arange(1, 17, dtype=np.float32)[:, None], (16, 18)).copy()
+        rows = np.broadcast_to(
+            np.arange(1, 17, dtype=np.float32)[:, None], (16, 18)
+        ).copy()
         rows[0] = 0
         self._raster(self.inputs / "background.tif", row_band=True, row_values=rows)
         self._config(vnir_path="inputs/background.tif").validate_inputs()
@@ -130,7 +161,9 @@ class SplashConfigTests(unittest.TestCase):
         )
         for name, columns, rows in cases:
             with self.subTest(name=name):
-                self._raster(self.inputs / name, row_band=True, columns=columns, row_values=rows)
+                self._raster(
+                    self.inputs / name, row_band=True, columns=columns, row_values=rows
+                )
                 with self.assertRaisesRegex(ValueError, "at least 11 pixels"):
                     self._config(vnir_path=f"inputs/{name}").validate_inputs()
 
@@ -138,8 +171,11 @@ class SplashConfigTests(unittest.TestCase):
         self._raster(self.inputs / "no_crs.tif", row_band=True, with_crs=False)
         with self.assertRaisesRegex(ValueError, "CRS"):
             self._config(vnir_path="inputs/no_crs.tif").validate_inputs()
-        self._raster(self.inputs / "rotated.tif", row_band=True,
-                     transform=(100, 1, 0.1, 200, 0, -1))
+        self._raster(
+            self.inputs / "rotated.tif",
+            row_band=True,
+            transform=(100, 1, 0.1, 200, 0, -1),
+        )
         with self.assertRaisesRegex(ValueError, "north-up"):
             self._config(swir_path="inputs/rotated.tif").validate_inputs()
 
@@ -161,8 +197,12 @@ class SplashConfigTests(unittest.TestCase):
             self._config(out_folder="inputs").validate_inputs()
 
     def test_invalid_ranges_and_display_indices(self):
-        for key in ("ss_vnir_band_range", "ss_swir_band_range",
-                    "ereg_vnir_band_range", "ereg_swir_band_range"):
+        for key in (
+            "ss_vnir_band_range",
+            "ss_swir_band_range",
+            "ereg_vnir_band_range",
+            "ereg_swir_band_range",
+        ):
             for value in ([2, 1], [-1, 1], [0, 1.5], [0], [False, 1]):
                 with self.subTest(key=key, value=value):
                     with self.assertRaisesRegex(ValueError, key):
@@ -206,8 +246,12 @@ class SplashConfigTests(unittest.TestCase):
             self._config(elastic_steps=8)
 
     def test_nonstring_paths_are_configuration_errors(self):
-        for key, value in (("vnir_path", 123), ("swir_path", True),
-                           ("mica_path", ["inputs/msi.tif"]), ("out_folder", 123)):
+        for key, value in (
+            ("vnir_path", 123),
+            ("swir_path", True),
+            ("mica_path", ["inputs/msi.tif"]),
+            ("out_folder", 123),
+        ):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(ValueError, key):
                     self._config(**{key: value})

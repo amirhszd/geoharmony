@@ -1,15 +1,15 @@
+import os
+import threading
+import time
+import webbrowser
+from pathlib import Path
+
 import dash
-from dash import dcc, html, Input, Output, State
+import dash_bootstrap_components as dbc
 import plotly.express as px
 import plotly.graph_objects as go
-from pathlib import Path
-import os
-import webbrowser
-import dash_bootstrap_components as dbc
-import time
 import requests
-import threading
-import logging
+from dash import Input, Output, State, dcc, html
 
 text_style = {
     "backgroundColor": "#f8f9fa",  # light gray
@@ -19,7 +19,7 @@ text_style = {
     "marginBottom": "10px",
     "fontSize": "16px",
     "lineHeight": "1.5",
-    "color": "#333"
+    "color": "#333",
 }
 
 instruction_text = """
@@ -33,6 +33,7 @@ instruction_text = """
 - Quality improves with the **number** and **spatial coverage** of correspondences.
 """
 
+
 def wait_then_open(port=8050, path=""):
     url = f"http://127.0.0.1:{port}/{path}"
     for _ in range(50):  # retry for ~5 seconds
@@ -45,14 +46,15 @@ def wait_then_open(port=8050, path=""):
             pass
         time.sleep(0.1)
 
+
 # =========================
 #      MAIN DASH APP
 # =========================
-def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_title="TARGET"):
-    app = dash.Dash(
-        __name__,
-        assets_folder=str(Path(__file__).with_name("assets"))
-    )
+def make_dash_app(
+    image1, image2, results_queue, ref_title="REFERENCE", tgt_title="TARGET"
+):
+    app = dash.Dash(__name__, assets_folder=str(Path(__file__).with_name("assets")))
+
     # =========================
     #      BASE FIGURE MAKER
     # =========================
@@ -60,11 +62,11 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
         fig = px.imshow(image)
         fig = go.Figure(fig)
         fig.update_layout(
-            clickmode='event+select',
-            dragmode='zoom',
+            clickmode="event+select",
+            dragmode="zoom",
             autosize=True,  # let Plotly fill its parent
             margin=dict(l=60, r=60, t=20, b=60),
-            uirevision='fixed'
+            uirevision="fixed",
         )
         return fig
 
@@ -75,105 +77,186 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
     fig2 = make_base_fig(image2)
 
     def serve_layout(fig1, fig2, ref_title, tgt_title):
-        return dbc.Container(fluid=True, children=[
-
-            # ---------- Header ----------
-            dbc.Row([
-                dbc.Col(html.H2("Manual coregistration", className="text-center fw-bold"))
-            ], className="mt-3"),
-
-            dbc.Row([
-                dbc.Col(
-                    dbc.Card(
-                        dbc.CardBody(
-                            dcc.Markdown(instruction_text, className="mb-0")
-                        ),
-                        className="mb-3 shadow-sm",
-                    ),
-                    width=12
-                )
-            ]),
-
-            # ---------- Two responsive columns ----------
-            dbc.Row([
-
-                # ----- Reference side -----
-                dbc.Col(md=6, children=[
-                    html.H4(ref_title, className="text-center text-primary fw-bold"),
-                    dbc.Card([
-                        dcc.Graph(
-                            id="image-left",
-                            figure=fig1,
-                            config={"responsive": True, "scrollZoom": True},
-                            style={"height": "60vh"}  # fill 60 % of viewport height
-                        ),
-                        dbc.CardBody(
-                            dbc.ButtonGroup([
-                                dbc.Button("Undo", id="undo-left", color="info", n_clicks=0),
-                                dbc.Button("Clear", id="clear-left", color="info", n_clicks=0)
-                            ], className="d-flex justify-content-center")
+        return dbc.Container(
+            fluid=True,
+            children=[
+                # ---------- Header ----------
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            html.H2(
+                                "Manual coregistration", className="text-center fw-bold"
+                            )
                         )
-                    ], className="shadow")
-                ]),
-
-                # ----- Target side -----
-                dbc.Col(md=6, children=[
-                    html.H4(tgt_title, className="text-center text-primary fw-bold"),
-                    dbc.Card([
-                        dcc.Graph(
-                            id="image-right",
-                            figure=fig2,
-                            config={"responsive": True, "scrollZoom": True},
-                            style={"height": "60vh"}
-                        ),
-                        dbc.CardBody(
-                            dbc.ButtonGroup([
-                                dbc.Button("Undo", id="undo-right", color="info", n_clicks=0),
-                                dbc.Button("Clear", id="clear-right", color="info", n_clicks=0)
-                            ], className="d-flex justify-content-center")
+                    ],
+                    className="mt-3",
+                ),
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dbc.Card(
+                                dbc.CardBody(
+                                    dcc.Markdown(instruction_text, className="mb-0")
+                                ),
+                                className="mb-3 shadow-sm",
+                            ),
+                            width=12,
                         )
-                    ], className="shadow")
-                ])
-            ], className="gx-4"),  # horizontal gutter
-
-            # ---------- Submit button ----------
-            dbc.Row([
-                dbc.Col(
-                    dbc.Button("Next", id="submit-button",
-                               color="success", disabled=True, className="px-5"),
-                    className="text-center my-4"
-                )
-            ]),
-
-            # ---------- Warning message ----------
-            dbc.Row([
-                dbc.Col(
-                    dbc.Alert(id="warning-div", color="warning",
-                              is_open=False,  # start hidden
-                              className="text-center fw-bold"),
-                )
-            ]),
-
-            dbc.Row([
-                dbc.Col(
-                    dbc.Alert(id="success-div",
-                              color="success",
-                              is_open=False,
-                              className="text-center fw-bold"),
-                )
-            ]),
-
-            dbc.Row(id="spinner-ui", style={"display": "none"}, children=[
-                dbc.Col([
-                    html.H4("Processing...", className="text-center mt-4"),
-                    dbc.Spinner(size="lg", color="primary", fullscreen=True)
-                ])
-            ]),
-
-            # Stores
-            dcc.Store(id="store-left", data=[]),
-            dcc.Store(id="store-right", data=[])
-        ])
+                    ]
+                ),
+                # ---------- Two responsive columns ----------
+                dbc.Row(
+                    [
+                        # ----- Reference side -----
+                        dbc.Col(
+                            md=6,
+                            children=[
+                                html.H4(
+                                    ref_title,
+                                    className="text-center text-primary fw-bold",
+                                ),
+                                dbc.Card(
+                                    [
+                                        dcc.Graph(
+                                            id="image-left",
+                                            figure=fig1,
+                                            config={
+                                                "responsive": True,
+                                                "scrollZoom": True,
+                                            },
+                                            style={
+                                                "height": "60vh"
+                                            },  # fill 60 % of viewport height
+                                        ),
+                                        dbc.CardBody(
+                                            dbc.ButtonGroup(
+                                                [
+                                                    dbc.Button(
+                                                        "Undo",
+                                                        id="undo-left",
+                                                        color="info",
+                                                        n_clicks=0,
+                                                    ),
+                                                    dbc.Button(
+                                                        "Clear",
+                                                        id="clear-left",
+                                                        color="info",
+                                                        n_clicks=0,
+                                                    ),
+                                                ],
+                                                className="d-flex justify-content-center",
+                                            )
+                                        ),
+                                    ],
+                                    className="shadow",
+                                ),
+                            ],
+                        ),
+                        # ----- Target side -----
+                        dbc.Col(
+                            md=6,
+                            children=[
+                                html.H4(
+                                    tgt_title,
+                                    className="text-center text-primary fw-bold",
+                                ),
+                                dbc.Card(
+                                    [
+                                        dcc.Graph(
+                                            id="image-right",
+                                            figure=fig2,
+                                            config={
+                                                "responsive": True,
+                                                "scrollZoom": True,
+                                            },
+                                            style={"height": "60vh"},
+                                        ),
+                                        dbc.CardBody(
+                                            dbc.ButtonGroup(
+                                                [
+                                                    dbc.Button(
+                                                        "Undo",
+                                                        id="undo-right",
+                                                        color="info",
+                                                        n_clicks=0,
+                                                    ),
+                                                    dbc.Button(
+                                                        "Clear",
+                                                        id="clear-right",
+                                                        color="info",
+                                                        n_clicks=0,
+                                                    ),
+                                                ],
+                                                className="d-flex justify-content-center",
+                                            )
+                                        ),
+                                    ],
+                                    className="shadow",
+                                ),
+                            ],
+                        ),
+                    ],
+                    className="gx-4",
+                ),  # horizontal gutter
+                # ---------- Submit button ----------
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dbc.Button(
+                                "Next",
+                                id="submit-button",
+                                color="success",
+                                disabled=True,
+                                className="px-5",
+                            ),
+                            className="text-center my-4",
+                        )
+                    ]
+                ),
+                # ---------- Warning message ----------
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dbc.Alert(
+                                id="warning-div",
+                                color="warning",
+                                is_open=False,  # start hidden
+                                className="text-center fw-bold",
+                            ),
+                        )
+                    ]
+                ),
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dbc.Alert(
+                                id="success-div",
+                                color="success",
+                                is_open=False,
+                                className="text-center fw-bold",
+                            ),
+                        )
+                    ]
+                ),
+                dbc.Row(
+                    id="spinner-ui",
+                    style={"display": "none"},
+                    children=[
+                        dbc.Col(
+                            [
+                                html.H4("Processing...", className="text-center mt-4"),
+                                dbc.Spinner(
+                                    size="lg", color="primary", fullscreen=True
+                                ),
+                            ]
+                        )
+                    ],
+                ),
+                # Stores
+                dcc.Store(id="store-left", data=[]),
+                dcc.Store(id="store-right", data=[]),
+            ],
+        )
 
     app.layout = serve_layout(fig1, fig2, ref_title, tgt_title)
 
@@ -181,14 +264,14 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
     #      LEFT IMAGE CALLBACK
     # =========================
     @app.callback(
-        Output('image-left', 'figure'),
-        Output('store-left', 'data'),
-        Input('image-left', 'clickData'),
-        Input('undo-left', 'n_clicks'),
-        Input('clear-left', 'n_clicks'),
-        State('image-left', 'relayoutData'),
-        State('store-left', 'data'),
-        prevent_initial_call=True
+        Output("image-left", "figure"),
+        Output("store-left", "data"),
+        Input("image-left", "clickData"),
+        Input("undo-left", "n_clicks"),
+        Input("clear-left", "n_clicks"),
+        State("image-left", "relayoutData"),
+        State("store-left", "data"),
+        prevent_initial_call=True,
     )
     def update_left(clickData, undo, clear, relayout, points):
         return update_image_core(clickData, undo, clear, relayout, points, fig1)
@@ -197,14 +280,14 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
     #      RIGHT IMAGE CALLBACK
     # =========================
     @app.callback(
-        Output('image-right', 'figure'),
-        Output('store-right', 'data'),
-        Input('image-right', 'clickData'),
-        Input('undo-right', 'n_clicks'),
-        Input('clear-right', 'n_clicks'),
-        State('image-right', 'relayoutData'),
-        State('store-right', 'data'),
-        prevent_initial_call=True
+        Output("image-right", "figure"),
+        Output("store-right", "data"),
+        Input("image-right", "clickData"),
+        Input("undo-right", "n_clicks"),
+        Input("clear-right", "n_clicks"),
+        State("image-right", "relayoutData"),
+        State("store-right", "data"),
+        prevent_initial_call=True,
     )
     def update_right(clickData, undo, clear, relayout, points):
         return update_image_core(clickData, undo, clear, relayout, points, fig2)
@@ -212,22 +295,26 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
     # =========================
     #      IMAGE CORE LOGIC
     # =========================
-    def update_image_core(clickData, undo_clicks, clear_clicks, relayoutData, stored_points, fig):
+    def update_image_core(
+        clickData, undo_clicks, clear_clicks, relayoutData, stored_points, fig
+    ):
         ctx = dash.callback_context
         if not ctx.triggered:
             return dash.no_update, dash.no_update
 
-        triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
-        if 'image' in triggered_id and clickData:
-            point = clickData['points'][0]
-            stored_points.append({'x': point['x'], 'y': point['y']})
-        elif 'undo' in triggered_id:
+        if "image" in triggered_id and clickData:
+            point = clickData["points"][0]
+            stored_points.append({"x": point["x"], "y": point["y"]})
+        elif "undo" in triggered_id:
             if stored_points:
                 stored_points.pop()
             if len(fig.data) > 1:
-                fig.data = [fig.data[i] for i in range(len(fig.data) -1)]  # remove the last trace
-        elif 'clear' in triggered_id:
+                fig.data = [
+                    fig.data[i] for i in range(len(fig.data) - 1)
+                ]  # remove the last trace
+        elif "clear" in triggered_id:
             stored_points = []
             fig.data = [fig.data[0]]
 
@@ -236,30 +323,36 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
         if stored_points:
             fig.add_trace(
                 go.Scatter(
-                    x=[p['x'] for p in stored_points],
-                    y=[p['y'] for p in stored_points],
-                    mode='markers+text',
-                    marker=dict(size=10, color='red', symbol='x', line=dict(width=2), opacity=1),
+                    x=[p["x"] for p in stored_points],
+                    y=[p["y"] for p in stored_points],
+                    mode="markers+text",
+                    marker=dict(
+                        size=10, color="red", symbol="x", line=dict(width=2), opacity=1
+                    ),
                     text=[str(i + 1) for i in range(len(stored_points))],
-                    textposition='top center',
-                    textfont=dict(size=14, color='black', family='Arial Black'),
-                    name='Clicks',
+                    textposition="top center",
+                    textfont=dict(size=14, color="black", family="Arial Black"),
+                    name="Clicks",
                     opacity=1,
-                    showlegend = False,
+                    showlegend=False,
                 )
             )
 
         if relayoutData:
-            x_range = relayoutData.get('xaxis.range[0]'), relayoutData.get('xaxis.range[1]')
-            y_range = relayoutData.get('yaxis.range[0]'), relayoutData.get('yaxis.range[1]')
+            x_range = (
+                relayoutData.get("xaxis.range[0]"),
+                relayoutData.get("xaxis.range[1]"),
+            )
+            y_range = (
+                relayoutData.get("yaxis.range[0]"),
+                relayoutData.get("yaxis.range[1]"),
+            )
             if None not in x_range:
                 fig.update_xaxes(range=x_range)
             if None not in y_range:
                 fig.update_yaxes(range=y_range)
 
         return fig, stored_points
-
-
 
     # =========================
     #      SUBMIT CALLBACK
@@ -271,7 +364,7 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
         Input("submit-button", "n_clicks"),
         State("store-left", "data"),
         State("store-right", "data"),
-        prevent_initial_call=True
+        prevent_initial_call=True,
     )
     def do_submit(n, left_pts, right_pts):
         if not n:
@@ -288,7 +381,9 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
 
         # 3) OPTIONAL: exit the Dash process after a brief delay
         #    (gives the user time to see the message)
-        import threading, os, time
+        import threading
+        import time
+
         def delayed_exit():
             time.sleep(2)  # 2-second grace
             os._exit(0)
@@ -302,7 +397,7 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
         Output("warning-div", "children"),
         Output("warning-div", "is_open"),
         Input("store-left", "data"),
-        Input("store-right", "data")
+        Input("store-right", "data"),
     )
     def validate(left_pts, right_pts):
         if len(left_pts) < 4 or len(right_pts) < 4:
@@ -311,14 +406,15 @@ def make_dash_app(image1, image2, results_queue, ref_title="REFERENCE", tgt_titl
             return True, "Both images must have the same number of points.", True
         return False, "", False
 
-
-
     return app
+
 
 # =========================
 #      RUN DASH APP
 # =========================
-def run_get_points_app(image1, image2, name, results_queue, port=8050, open_browser=True):
+def run_get_points_app(
+    image1, image2, name, results_queue, port=8050, open_browser=True
+):
     ref_title = "Micasense"
     if name == "vnir":
         tgt_title = "VNIR"

@@ -1,12 +1,12 @@
-import numpy as np
-from osgeo import gdal, osr, gdal_array
-from osgeo import gdalconst
 import os
+
+import numpy as np
+from osgeo import gdal, gdal_array, osr
 from rasterio.crs import CRS
 
-class GdalImage():
-    def __init__(self, path: str):
 
+class GdalImage:
+    def __init__(self, path: str):
         #### TODO redo the commenting here, this is a mess
 
         """
@@ -34,7 +34,7 @@ class GdalImage():
         # try: os.remove(self.path + ".aux.xml")
         # except: pass
 
-    def read(self, bands: list = None, band_last = False):
+    def read(self, bands: list = None, band_last=False):
         """
         Reads bands from the dataset.
         - If bands is None, loads the entire array.
@@ -48,14 +48,16 @@ class GdalImage():
         elif isinstance(bands, (list, tuple)):
             band_array = []
             for band in bands:
-                band_array.append(self.ds.GetRasterBand(band + 1).ReadAsArray()[None, ...])
+                band_array.append(
+                    self.ds.GetRasterBand(band + 1).ReadAsArray()[None, ...]
+                )
             array = np.concatenate(band_array, 0)
         else:
             raise ValueError("bands must be None, an int, or a list/tuple of ints")
 
         return array if not band_last else np.moveaxis(array, 0, -1)
 
-    def read_display_image(self, bands: list, band_last = False):
+    def read_display_image(self, bands: list, band_last=False):
         """
         Returns a display-ready uint8 image from the data cube, suitable for visualization in a notebook or GUI.
 
@@ -67,26 +69,32 @@ class GdalImage():
         Returns:
             np.ndarray: uint8 image array with bands in the last dimension.
         """
-        arr = self.read(bands, band_last= band_last)
-        arr_uint8 = self.to_uint8(arr, band_last = band_last)
+        arr = self.read(bands, band_last=band_last)
+        arr_uint8 = self.to_uint8(arr, band_last=band_last)
         return arr_uint8
 
     @staticmethod
-    def to_uint8(array: np.ndarray, band_last = False) -> np.ndarray:
-        array = np.nan_to_num(np.asarray(array, dtype=np.float32), nan=0, posinf=0, neginf=0)
+    def to_uint8(array: np.ndarray, band_last=False) -> np.ndarray:
+        array = np.nan_to_num(
+            np.asarray(array, dtype=np.float32), nan=0, posinf=0, neginf=0
+        )
         array = np.maximum(array, 0)
         new_image = np.zeros_like(array, dtype=np.uint8)
 
         nbands = array.shape[-1] if band_last else array.shape[0]
         for i in range(nbands):
-            x = array[...,i] if band_last else array[i,...]
+            x = array[..., i] if band_last else array[i, ...]
             min = np.nanpercentile(x, 2)
             max = np.nanpercentile(x, 98)
-            band = np.clip((x - min)*255 / (max - min), 0, 255) if max > min else np.zeros_like(x)
+            band = (
+                np.clip((x - min) * 255 / (max - min), 0, 255)
+                if max > min
+                else np.zeros_like(x)
+            )
             if band_last:
-                new_image[...,i] = band
+                new_image[..., i] = band
             else:
-                new_image[i,...] = band
+                new_image[i, ...] = band
         return new_image.astype(np.uint8)
 
     def gdalmetadata(self, path: str):
@@ -118,7 +126,9 @@ class GdalImage():
         crs_code = crs_obj.to_string()  # e.g., 'EPSG:32618'
         self.crs = crs_code if crs_code is not None else None
         if self.crs is None:
-            print(f"Warning: Could not determine CRS code from dataset projection: {self.path}")
+            print(
+                f"Warning: Could not determine CRS code from dataset projection: {self.path}"
+            )
 
         # get image x and y pixel size
         self.x_res = self.geotransform[1]
@@ -153,16 +163,19 @@ class GdalImage():
             self.band_nodata.append(ds_band.GetNoDataValue())
             # Read existing statistics only. Querying/computing GDAL statistics
             # can create PAM sidecars, changing an input after fingerprinting.
-            stats = [ds_band.GetMetadataItem('STATISTICS_' + key)
-                     for key in ('MINIMUM', 'MAXIMUM', 'MEAN', 'STDDEV')]
+            stats = [
+                ds_band.GetMetadataItem("STATISTICS_" + key)
+                for key in ("MINIMUM", "MAXIMUM", "MEAN", "STDDEV")
+            ]
             stats = [float(value) if value is not None else None for value in stats]
-            self.band_stats.append({
-                "min": stats[0],
-                "max": stats[1],
-                "mean": stats[2],
-                "std": stats[3]
-            })
-        self.band_wavelengths_units = self.ds.GetMetadata()['wavelength_units'] if 'wavelength_units' in self.ds.GetMetadata() else None
+            self.band_stats.append(
+                {"min": stats[0], "max": stats[1], "mean": stats[2], "std": stats[3]}
+            )
+        self.band_wavelengths_units = (
+            self.ds.GetMetadata()["wavelength_units"]
+            if "wavelength_units" in self.ds.GetMetadata()
+            else None
+        )
 
         return self
 
@@ -172,7 +185,6 @@ class GdalImage():
         lat_values = np.linspace(self.ymin, self.ymax, self.rows)
         lon_raster, lat_raster = np.meshgrid(lon_values, lat_values)
         return lon_raster, lat_raster
-
 
     def get_wgs84_bounds(self):
         """
@@ -203,12 +215,13 @@ class GdalImage():
         return [[lat_min, lon_min], [lat_max, lon_max]]
 
 
-def gdalimage_to_unit16(gdalimage_input,
-                        extension_string = "u16",
-                        is_mica = False,
-                        output_folder = None):
+def gdalimage_to_unit16(
+    gdalimage_input, extension_string="u16", is_mica=False, output_folder=None
+):
 
-    output_filename = os.path.join(output_folder, os.path.basename(gdalimage_input.path) + f'_{extension_string}')
+    output_filename = os.path.join(
+        output_folder, os.path.basename(gdalimage_input.path) + f"_{extension_string}"
+    )
     input_dtype_dict = gdalimage_input.dtype_classes
 
     if "uint" in input_dtype_dict["string"].lower():
@@ -219,15 +232,17 @@ def gdalimage_to_unit16(gdalimage_input,
     maxvals = np.array([band_stats["max"] for band_stats in gdalimage_input.band_stats])
 
     # find the correction factor going to uint16
-    scale_coeffs = np.iinfo(np.uint16).max/(maxvals)
+    scale_coeffs = np.iinfo(np.uint16).max / (maxvals)
     scale_coeffs[np.isinf(scale_coeffs)] = 0
-    unscale_coeffs = 1/scale_coeffs
+    unscale_coeffs = 1 / scale_coeffs
     unscale_coeffs[np.isinf(unscale_coeffs)] = 0
 
     scale_params = []
     for c, band_stats in enumerate(gdalimage_input.band_stats):
         if is_mica:
-            scale_params.append((0, band_stats["max"], 0, band_stats["max"]*10000))  # Mica is scaled to 1000
+            scale_params.append(
+                (0, band_stats["max"], 0, band_stats["max"] * 10000)
+            )  # Mica is scaled to 1000
         else:
             if c == gdalimage_input.bands - 1:  # skip the last band for vnir_swir
                 scale_params.append((0, band_stats["max"], 0, band_stats["max"]))

@@ -57,13 +57,21 @@ warped grids support inspection; they are not calibrated error bounds.
 
 Before distributing a new software version:
 
-1. Run input-validation checks and the generated example in the documented
-   environment.
+1. Run the complete test suite and the generated CLI example on Python 3.10,
+   3.11 and 3.12 using the [development checks](development.md). Keep the
+   production Python 3.11 environment specification and its lock file together.
 2. Exercise the setup, point-picker and preview interfaces on a local dataset.
 3. Check the final spectral-band counts, output grids and raster sidecars.
 4. Confirm that saved transformation metadata rejects mismatched inputs.
 5. Update the version, changelog and citation metadata together, and record the
    commit used for the release.
+
+The test suite currently contains 40 tests covering configuration, input
+preparation, the CLI, browser callbacks, raster operations and pipeline
+contracts. The separate CLI demo exercises all three registration stages on a
+generated scene. Passing these checks establishes software execution and
+compatibility for that environment; it does not establish real-data alignment
+accuracy. Run the configured lint and format checks before merging changes.
 
 The repository license covers its supplied software. Users retain responsibility
 for permission to distribute their input data and generated data products.

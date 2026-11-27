@@ -2,10 +2,11 @@
 
 SPLASH uses GDAL for raster I/O, OpenCV and scikit-learn for registration
 components, ANTsPy for elastic registration, and Dash for its local browser
-interface. Python 3.11 and a Conda environment are the supported installation
-route for this release.
+interface. Use the pinned Python 3.11 Conda environment below for the default
+installation. Python 3.10, 3.11 and 3.12 have each passed Linux wheel-install,
+dependency, test-suite and generated-workflow checks; see the
+[development guide](development.md).
 
-The environment and generated end-to-end example have been checked on Linux.
 Windows and macOS installation and interface behavior have not yet been
 validated.
 
@@ -49,6 +50,10 @@ geoharmony-splash demo --output-dir /tmp/splash-demo
 Use a fresh example directory. The generated images and known homographies are
 for software verification; they do not establish performance on a real sensor
 or site.
+
+The compatibility environments are generated from the same dependency
+specification with only the Python version changed. The production
+`environment.yml` and Linux lock specification retain Python 3.11.
 
 ## Browser interface
 

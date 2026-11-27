@@ -1,5 +1,10 @@
 # GeoHarmony — SPLASH
 
+[![Python 3.10, 3.11, 3.12](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python)](docs/installation.md)
+[![Tests](https://github.com/amirhszd/geoharmony/actions/workflows/smoke.yml/badge.svg?branch=splash-public)](https://github.com/amirhszd/geoharmony/actions/workflows/smoke.yml)
+[![Code quality](https://github.com/amirhszd/geoharmony/actions/workflows/quality.yml/badge.svg?branch=splash-public)](https://github.com/amirhszd/geoharmony/actions/workflows/quality.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 SPLASH aligns georeferenced VNIR and SWIR pushbroom images using a multispectral
 reference image. It combines three processing stages:
 
@@ -29,9 +34,9 @@ geoharmony-splash --help
 ```
 
 See [installation](docs/installation.md) for environment checks and a headless
-setup. The documented environment has been checked on Linux; Windows and macOS
-have not yet been validated. Model weights and GPU inference packages are not
-required.
+setup. The default Conda recipe uses Python 3.11; automated Linux tests cover
+Python 3.10, 3.11, and 3.12. Windows and macOS have not yet been validated.
+Model weights and GPU inference packages are not required.
 
 ## Try the generated example
 
@@ -106,6 +111,7 @@ changes; they are not calibrated positional uncertainty or an accuracy score.
 - [Input data and acquisition-row preparation](docs/input-data.md)
 - [Browser interface and headless runs](docs/gui.md)
 - [Configuration and hyperparameters](docs/parameters.md)
+- [Development and automated checks](docs/development.md)
 - [Examples](examples/README.md)
 - [Release and reproducibility notes](docs/releases.md)
 

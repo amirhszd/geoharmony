@@ -1,8 +1,8 @@
 import contextlib
 import io
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 from osgeo import gdal
@@ -22,17 +22,24 @@ class CommandLineTests(unittest.TestCase):
 
     def test_prepare_native_rows_preserves_measurements_and_source(self):
         source, output = self.root / "native.tif", self.root / "with_rows.tif"
-        ds = gdal.GetDriverByName("GTiff").Create(str(source), 20, 12, 3, gdal.GDT_Float32)
-        data = np.arange(240, dtype=np.float32).reshape(12, 20)/1000
+        ds = gdal.GetDriverByName("GTiff").Create(
+            str(source), 20, 12, 3, gdal.GDT_Float32
+        )
+        data = np.arange(240, dtype=np.float32).reshape(12, 20) / 1000
         for i in range(1, 4):
-            ds.GetRasterBand(i).WriteArray(data+i/10)
+            ds.GetRasterBand(i).WriteArray(data + i / 10)
         ds = None
         original = source.read_bytes()
-        self.assertEqual(main(["prepare-rows", str(source), "--output", str(output)]), 0)
+        self.assertEqual(
+            main(["prepare-rows", str(source), "--output", str(output)]), 0
+        )
         result = gdal.Open(str(output))
         self.assertEqual(result.RasterCount, 4)
-        np.testing.assert_array_equal(result.GetRasterBand(4).ReadAsArray(), np.repeat(np.arange(1, 13, dtype=np.float32)[:, None], 20, axis=1))
-        np.testing.assert_array_equal(result.GetRasterBand(3).ReadAsArray(), data+0.3)
+        np.testing.assert_array_equal(
+            result.GetRasterBand(4).ReadAsArray(),
+            np.repeat(np.arange(1, 13, dtype=np.float32)[:, None], 20, axis=1),
+        )
+        np.testing.assert_array_equal(result.GetRasterBand(3).ReadAsArray(), data + 0.3)
         self.assertEqual(source.read_bytes(), original)
         with self.assertRaisesRegex(ValueError, "already has"):
             prepare_rows(output, self.root / "twice.tif")
@@ -62,7 +69,10 @@ class CommandLineTests(unittest.TestCase):
 
     def test_missing_headless_config_and_invalid_port_are_rejected(self):
         for arguments in (["--no-gui"], ["--validate-only"], ["--port", "0"]):
-            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+            with (
+                self.subTest(arguments=arguments),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
                 self.assertEqual(main(arguments), 1)
 
 

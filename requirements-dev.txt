@@ -1,0 +1,2 @@
+# Code-quality tools only; runtime dependencies are installed separately.
+ruff==0.17.6
