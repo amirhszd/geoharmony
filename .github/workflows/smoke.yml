@@ -26,11 +26,11 @@ jobs:
         run: |
           python3 scripts/ci_environment.py \
             --python-version "$EXPECTED_PYTHON" \
-            --output "$RUNNER_TEMP/splash-environment.yml"
+            --output .ci-environment.yml
       - uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: splash
-          environment-file: ${{ runner.temp }}/splash-environment.yml
+          environment-file: .ci-environment.yml
           channels: conda-forge
           channel-priority: strict
           auto-activate-base: false
